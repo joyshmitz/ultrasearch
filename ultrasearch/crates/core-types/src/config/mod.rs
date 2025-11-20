@@ -387,3 +387,27 @@ fn apply_placeholders(cfg: &mut AppConfig) {
     cfg.paths.jobs_dir = cfg.paths.jobs_dir.replace("{data_dir}", &dd);
     cfg.semantic.index_dir = cfg.semantic.index_dir.replace("{data_dir}", &dd);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_placeholders_expand() {
+        let mut cfg = AppConfig::default();
+        cfg.app.data_dir = "X:/UltraSearch".into();
+        apply_placeholders(&mut cfg);
+        assert_eq!(cfg.logging.file, "X:/UltraSearch/log/searchd.log");
+        assert!(cfg.paths.meta_index.starts_with("X:/UltraSearch/index/meta"));
+        assert!(cfg.semantic.index_dir.starts_with("X:/UltraSearch/index/semantic"));
+    }
+
+    #[test]
+    fn merge_prefers_override() {
+        let base = AppConfig::default();
+        let mut override_cfg = AppConfig::default();
+        override_cfg.logging.level = "debug".into();
+        let merged = merge(base, override_cfg);
+        assert_eq!(merged.logging.level, "debug");
+    }
+}
