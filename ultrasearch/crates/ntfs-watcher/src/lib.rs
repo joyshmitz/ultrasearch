@@ -41,6 +41,22 @@ pub enum FileEvent {
     AttributesChanged { doc: DocKey },
 }
 
+/// Configuration knobs for NTFS/USN access.
+#[derive(Debug, Clone)]
+pub struct ReaderConfig {
+    pub chunk_size: usize,
+    pub max_records_per_tick: usize,
+}
+
+impl Default for ReaderConfig {
+    fn default() -> Self {
+        Self {
+            chunk_size: 1 << 20,          // 1 MiB read buffer
+            max_records_per_tick: 10_000, // reasonable default for service loop
+        }
+    }
+}
+
 /// Cursor for resuming USN processing.
 #[derive(Debug, Clone, Copy)]
 pub struct JournalCursor {

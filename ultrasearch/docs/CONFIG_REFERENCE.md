@@ -44,10 +44,13 @@ enabled = false
 bind    = "127.0.0.1:9310"   # HTTP /metrics (Prometheus text)
 push_interval_secs = 10      # if future push gateway is enabled
 sample_interval_secs = 10    # scheduler/system sampling
+request_latency_buckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]
+worker_failure_threshold = 3
 ```
 
 - When `enabled=false`, metrics are still logged periodically (summaries) but no HTTP server is started.
 - Metrics namespace: `ultrasearch_*`. Key counters/histograms: files_indexed_total, search_latency_ms, worker_cpu_pct, worker_mem_bytes, usn_lag_seconds.
+- Service stub (c00.8.3) exposes Prometheus registry with counters: requests_total, worker_failures_total; histogram: request_latency_seconds. `scrape_metrics()` returns text format for pipeline to expose via IPC/HTTP later.
 
 ## Extraction limits (c00.5)
 
@@ -74,7 +77,7 @@ cpu_soft_limit_pct = 50
 cpu_hard_limit_pct = 80
 ```
 
-- `idle_warm_seconds` / `idle_deep_seconds` define the active→warm→deep transitions from GetLastInputInfo.
+- `idle_warm_seconds` / `idle_deep_seconds` define the active->warm->deep transitions from GetLastInputInfo.
 - `max_records_per_tick` caps how many USN records are processed in one scheduler loop.
 - `usn_chunk_bytes` sets the read buffer size when tailing the USN journal.
 - `cpu_*_pct` provide soft/hard cutoffs for deferring content indexing.
