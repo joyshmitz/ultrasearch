@@ -1,0 +1,15 @@
+[package]
+name = "ui"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "GPUI desktop client for UltraSearch (placeholder)"
+
+[dependencies]
+anyhow = { workspace = true }
+tracing = { workspace = true }
+ipc = { path = "../ipc" }
+core-types = { path = "../core-types" }
+gpui = { workspace = true }
+gpui-component = { workspace = true }

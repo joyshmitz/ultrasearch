@@ -1,0 +1,15 @@
+[package]
+name = "index-worker"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Batch indexing worker for UltraSearch"
+
+[dependencies]
+anyhow = { workspace = true }
+tracing = { workspace = true }
+core-types = { path = "../core-types" }
+content-extractor = { path = "../content-extractor" }
+content-index = { path = "../content-index" }
+ipc = { path = "../ipc" }

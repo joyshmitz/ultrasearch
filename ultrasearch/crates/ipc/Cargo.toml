@@ -1,0 +1,15 @@
+[package]
+name = "ipc"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Named-pipe IPC protocol types for UltraSearch"
+
+[dependencies]
+core-types = { path = "../core-types" }
+core-serialization = { path = "../core-serialization" }
+anyhow = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+uuid = { workspace = true }

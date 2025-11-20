@@ -1,0 +1,13 @@
+[package]
+name = "core-serialization"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Shared serialization helpers for UltraSearch"
+
+[dependencies]
+core-types = { path = "../core-types" }
+serde = { workspace = true, features = ["derive"] }
+bincode = { workspace = true }
+rkyv = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "scheduler"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Background job scheduler for UltraSearch"
+
+[dependencies]
+core-types = { path = "../core-types" }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+crossbeam-channel = { workspace = true }
+sysinfo = { workspace = true }
+windows = { workspace = true }

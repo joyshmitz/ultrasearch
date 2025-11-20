@@ -1,0 +1,16 @@
+[package]
+name = "ntfs-watcher"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "NTFS volume discovery and USN journal watching for UltraSearch"
+
+[dependencies]
+core-types = { path = "../core-types" }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+windows = { workspace = true }
+windows-sys = { workspace = true }
+sysinfo = { workspace = true }
+usn-journal-rs = { workspace = true }
