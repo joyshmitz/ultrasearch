@@ -4,6 +4,7 @@
 
 pub mod idle;
 pub mod metrics;
+pub mod policy;
 
 pub use idle::{IdleSample, IdleState, IdleTracker};
 pub use metrics::{SystemLoad, SystemLoadSampler};
