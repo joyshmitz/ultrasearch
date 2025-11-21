@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use core_types::config::MetricsSection;
 use once_cell::sync::Lazy;
@@ -52,7 +54,7 @@ impl ServiceMetrics {
     /// Record a successful request with latency (seconds).
     pub fn record_request(&self, latency_secs: f64) {
         self.requests_total.inc();
-        let _ = self.request_latency.observe(latency_secs);
+        self.request_latency.observe(latency_secs);
     }
 
     /// Record a worker failure; returns true if the threshold has been met/exceeded.

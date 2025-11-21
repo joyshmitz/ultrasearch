@@ -81,7 +81,6 @@ gpui = { git = "https://github.com/zed-industries/zed.git", package = "gpui" }
 gpui-component = { git = "https://github.com/zed-industries/zed.git", package = "gpui-component" }
 proptest = "*"
 criterion = { version = "*", default-features = false, features = ["html_reports"] }
-hnsw_rs = { version = "*" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
