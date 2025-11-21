@@ -1,6 +1,7 @@
 At a high level you’re building:
 
 **Progress log**
+- 2025-11-21 (PurplePond): c00.5.6 job-file schema v1 — index-worker consumes versioned JSON (legacy array still works), writes extracted docs into content index, supports commit_every, Extractous flag/env, preview/JSON output; workspace fmt/check/clippy clean.
 - 2025-11-21 (PurplePond): c00.5.2 worker shim expanded — index-worker supports `--job-file` (JSON array), per-job limits, preview/`--json`, env/flag Extractous toggle; workspace rebuilt after restoring scheduler/service metrics placeholders.
 - 2025-11-21 (PurplePond): c00.4.1 module wiring fixed — added idle/mod.rs + metrics/mod.rs, moved SystemLoad/SystemLoadSampler into metrics, reconciled idle tracker export; workspace check/clippy green.
 - 2025-11-21 (PurplePond): c00.5.2 Extractous backend gated behind `extractous_backend` feature; default stack stays SimpleText+Noop; builders gain `with_extractous_enabled()` toggle; added size guard test; feature default now off to keep worker lean.
@@ -13,14 +14,20 @@ At a high level you’re building:
 - 2025-11-21 (WhiteStone): Added lightweight `/metrics` HTTP endpoint (Tokio/TCP) via `spawn_metrics_http`; metrics served in Prometheus text; scheduler disk throughput left placeholder (sysinfo lacks counters) but wired for future.
 - 2025-11-21 (WhiteStone): c00.8.4 in progress — status defaults to "initializing", metrics bind served; workspace deps add tempfile/memmap2 for core-serialization; cargo check green.
 - 2025-11-21 (WhiteStone): Added `init_basic_status_provider()` and global update helpers so scheduler/IPC can push volumes/state/metrics/queue/last_commit without threading Arcs; status still defaults to initializing until real data arrives.
+- 2025-11-21 (WhiteStone): Scheduler runtime now pushes queue depth/active worker counts + scheduler state into status/metrics; service main uses helper init + spawns /metrics server; Clap config loading wired.
+- 2025-11-21 (WhiteStone): Windows-only disk I/O metrics restored via PDH “Disk Bytes/sec”; non-Windows remains placeholder. Removed stale search handler; service/metrics `/metrics` TCP server retained; workspace build clean.
+- 2025-11-21 (LilacHill): c00.8.2 tracing/logging — service logging now uses config-driven level/file; JSON rolling file + stdout; tracing-subscriber json feature enabled.
+- 2025-11-21 (LilacHill): c00.8.4 status response now includes served_by host label; IPC/service tests updated.
 - 2025-11-21 (BlueHill): c00.2.1 core types reorganized into `ids`/`types` modules (DocKey/FileMeta/Volume* re-exported); IPC `SearchRequest` builder helpers added; c00.5.2 prep — `extractous_backend` feature normalized and Extractous stub wired with size checks; fmt/check/clippy clean.
 - 2025-11-21 (BlueHill): c00.3.1 volume discovery scaffold in `ntfs-watcher` — Windows-only implementation using GetLogicalDrives + GetVolumeInformationW + GetVolumeNameForVolumeMountPointW, filters to NTFS volumes, maps VolumeId→GUID + drive letters; non-Windows returns NotSupported; fmt/check/clippy clean.
 - 2025-11-21 (BlueHill): c00.3.2 MFT enumeration scaffold — `ntfs-watcher::enumerate_mft` uses usn-journal-rs (Windows) to iterate entries, resolve paths, and emit `core_types::FileMeta`; non-Windows returns NotSupported; fmt/check/clippy clean. meta-index gains `MetaDoc::from(&FileMeta)` and `add_file_meta_batch` for ingestion pipeline.
-- 2025-11-21 (BlueHill): c00.3.2 MFT enumeration scaffold — `ntfs-watcher::enumerate_mft` uses usn-journal-rs (Windows) to iterate entries with path resolution and returns FileMeta; non-Windows returns NotSupported; fmt/check/clippy clean.
+- 2025-11-21 (BlueHill): c00.3.3 ingest glue — service `meta_ingest` helpers to batch-insert FileMeta into meta-index (open/create, write, commit) with optional WriterConfig; exported for service use; fmt/check/clippy clean.
 - 2025-11-21 (RedSnow): Added meta-index regression test (`to_document_sets_fields`) to verify doc_key/volume/path/ext/size/timestamps/flags storage; meta-index tests pass; no manifest changes.
 - 2025-11-21 (RedSnow): Core-serialization gained `from_bincode_with_limit` to defensively bound payload size (with tests); crate tests pass.
 - 2025-11-21 (LilacHill): c00.2.3 added validated mmap loader for rkyv archives + bounded bincode helper; core-serialization fmt/check/clippy/tests clean; tempfile dev dep added.
 - 2025-11-21 (LilacHill): c00.2.4 bootstrap tweak — service binary now accepts `--config` and creates default config if missing via `load_or_create_config`; fmt/check/clippy clean for service crate.
+- 2025-11-21 (LilacHill): workspace deps aligned to wildcard bincode; service main repaired to use clap args + status provider + metrics HTTP stub; scheduler runtime status wiring cleaned; workspace check/clippy clean.
+- 2025-11-21 (LilacHill): c00.1.3 documented developer quality gates (fmt/check/clippy/ubs on touched files) per AGENTS.md.
 
 * an **NTFS + USN–driven catalog** for filenames and metadata (Everything‑style),
 * a **Tantivy‑based full‑text engine** for contents,
@@ -62,6 +69,13 @@ Constraints to keep in mind while designing everything:
 
    * Memory‑mapped storage for big datasets via `memmap2`.([Docs.rs][4])
    * Zero‑copy and compact serialization via `rkyv` / `zerocopy` for metadata snapshots and logs.([Docs.rs][5])
+
+### Developer quality gates (c00.1.3)
+
+- Run on touched Rust crates before committing: `cargo fmt --check`, `cargo check --all-targets`, `cargo clippy --all-targets -- -D warnings`.
+- Run UBS on changed Rust files when present: `ubs $(git diff --name-only -- '*.rs')`.
+- Honor nightly toolchain + wildcard deps per AGENTS.md; do not pin versions locally.
+- No destructive commands; never delete files without explicit approval (see AGENTS.md Rule #1).
 
 ---
 
@@ -603,7 +617,7 @@ Scheduler algorithm:
   * Check current state.
   * Pop jobs from allowed categories up to a per‑tick budget (e.g. N files or M MB).
   * When there’s a backlog of content jobs and DeepIdle persists for more than X seconds, spawn a worker with a batch (size tunable, e.g. 500–2000 files).
-  * Status 2025-11-21 (WhiteHill): scheduler crate now has configurable budgets/thresholds via `SchedulerConfig`, queue selectors, and `should_spawn_content_worker` cooldown/backlog helper. Idle/load samplers live in `scheduler::idle`/`metrics`; disk busy uses PDH `\\PhysicalDisk(_Total)\\Disk Bytes/sec` on Windows, stub elsewhere. Service main runs a lightweight sampling loop via `SchedulerRuntime`, updating status/metrics snapshots (no real job execution yet).
+  * Status 2025-11-21 (WhiteHill): scheduler crate now has configurable budgets/thresholds via `SchedulerConfig`, queue selectors, and `should_spawn_content_worker` cooldown/backlog helper. Idle/load samplers live in `scheduler::idle`/`metrics`; disk busy uses PDH `\\PhysicalDisk(_Total)\\Disk Bytes/sec` on Windows, stub elsewhere. Service main runs a lightweight sampling loop via `SchedulerRuntime`, updating status/metrics snapshots (queue depth/active worker counts can be injected via setters; real queues/workers still to be wired).
 
 Status 2025-11-21 (WhiteHill): implemented `scheduler::idle` (IdleTracker with configurable warm/deep thresholds on GetLastInputInfo) and `scheduler::metrics` (SystemLoadSampler with CPU/mem + sample duration; disk busy hook retained, currently zeroed until a reliable IO source is chosen). Scheduler crate tests and `cargo check -p scheduler --all-targets` pass; wiring into service loop and real disk busy metric remain TODO.
 
