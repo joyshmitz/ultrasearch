@@ -5,7 +5,7 @@ members = [
 ]
 
 [workspace.package]
-edition = "2021" # temporary until edition2024 is stable in toolchain; policy is nightly but avoid build breaks
+edition = "2024"
 rust-version = "1.84"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
@@ -29,7 +29,7 @@ tokio = { version = "*", features = ["rt-multi-thread", "macros", "net", "fs", "
 rayon = "*"
 crossbeam-channel = "*"
 parking_lot = "*"
-windows = { version = "0.58", features = [
+windows = { version = "*", features = [
     "Win32_Foundation",
     "Win32_System_SystemInformation",
     "Win32_System_Console",
@@ -42,6 +42,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Com",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# windows-sys intentionally omitted; using `windows` crate only.
 sysinfo = { version = "0.30", default-features = true, features = ["disk", "process", "system"] }
 tantivy = { version = "*", features = ["mmap", "lz4-compression"] }
 fst = "*"
@@ -50,6 +51,7 @@ extractous = { version = "*" }
 reqwest = { version = "*", default-features = false, features = ["rustls-tls", "stream"] }
 image = { version = "*", default-features = false, features = ["png", "jpeg"] }
 uuid = { version = "*", features = ["v4"] }
+usn-journal-rs = { version = "*", default-features = true }
 tracing = "*"
 tracing-subscriber = { version = "*", features = ["env-filter", "fmt"] }
 smallvec = "*"

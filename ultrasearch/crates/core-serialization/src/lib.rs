@@ -9,7 +9,19 @@ use rkyv::{
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Minimal wire-safe representation of a document key.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Archive, RSerialize, RDeserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    Archive,
+    RSerialize,
+    RDeserialize,
+)]
 #[archive(check_bytes)]
 pub struct DocKeyWire {
     pub volume: VolumeId,
@@ -55,11 +67,11 @@ where
 pub fn from_rkyv_bytes<T>(bytes: &[u8]) -> Result<T>
 where
     T: Archive,
-    T::Archived: CheckBytes<rkyv::validation::validators::DefaultValidator<'_>>
+    T::Archived: CheckBytes<rkyv::validation::validators::DefaultValidator<'static>>
         + RDeserialize<T, rkyv::Infallible>,
 {
-    let archived = rkyv::check_archived_root::<T>(bytes)
-        .map_err(|e| anyhow!("rkyv check failed: {e:?}"))?;
+    let archived =
+        rkyv::check_archived_root::<T>(bytes).map_err(|e| anyhow!("rkyv check failed: {e:?}"))?;
     archived
         .deserialize(&mut rkyv::Infallible)
         .map_err(|_| anyhow!("rkyv deserialize failed"))
