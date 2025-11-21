@@ -11,7 +11,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// Fields that can be targeted explicitly in the query language.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum FieldKind {
     Name,
     Path,
@@ -34,14 +34,14 @@ pub enum TermModifier {
     Fuzzy(u8), // max edit distance
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TermExpr {
     pub field: Option<FieldKind>, // None => default (name + content)
     pub value: String,
     pub modifier: TermModifier,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RangeOp {
     Gt,
     Ge,
@@ -50,20 +50,20 @@ pub enum RangeOp {
     Between,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RangeValue {
     I64 { lo: i64, hi: Option<i64> }, // timestamps
     U64 { lo: u64, hi: Option<u64> }, // sizes
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RangeExpr {
     pub field: FieldKind,
     pub op: RangeOp,
     pub value: RangeValue,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum QueryExpr {
     Term(TermExpr),
     Range(RangeExpr),
@@ -112,6 +112,40 @@ impl Default for SearchRequest {
             timeout: None,
             offset: 0,
         }
+    }
+}
+
+impl SearchRequest {
+    /// Convenience constructor with a supplied query.
+    pub fn with_query(query: QueryExpr) -> Self {
+        Self {
+            query,
+            ..Default::default()
+        }
+    }
+
+    /// Set a timeout in milliseconds.
+    pub fn with_timeout_ms(mut self, ms: u64) -> Self {
+        self.timeout = Some(Duration::from_millis(ms));
+        self
+    }
+
+    /// Set a result limit.
+    pub fn with_limit(mut self, limit: u32) -> Self {
+        self.limit = limit;
+        self
+    }
+
+    /// Set paging offset.
+    pub fn with_offset(mut self, offset: u32) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Override the search mode.
+    pub fn with_mode(mut self, mode: SearchMode) -> Self {
+        self.mode = mode;
+        self
     }
 }
 
@@ -296,5 +330,25 @@ mod tests {
             QueryExpr::And(items) => assert!(items.is_empty()),
             _ => panic!("default query should be And([])"),
         }
+    }
+
+    #[test]
+    fn request_builder_helpers_work() {
+        let q = QueryExpr::Term(TermExpr {
+            field: Some(FieldKind::Name),
+            value: "foo".into(),
+            modifier: TermModifier::Prefix,
+        });
+        let req = SearchRequest::with_query(q.clone())
+            .with_timeout_ms(500)
+            .with_limit(10)
+            .with_offset(5)
+            .with_mode(SearchMode::Content);
+
+        assert_eq!(req.query, q);
+        assert_eq!(req.timeout, Some(Duration::from_millis(500)));
+        assert_eq!(req.limit, 10);
+        assert_eq!(req.offset, 5);
+        assert!(matches!(req.mode, SearchMode::Content));
     }
 }
