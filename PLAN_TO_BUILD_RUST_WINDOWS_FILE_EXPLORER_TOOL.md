@@ -2,6 +2,8 @@ At a high level you’re building:
 
 **Progress log**
 - 2025-11-21 (LilacCat): c00.1.2 manifests aligned to nightly policy — workspace edition 2024, `windows` dep wildcard, workspace `hnsw_rs` removed (scoped only to semantic-index); lockfile removed; cargo fmt/check/clippy pass on nightly. 
+- 2025-11-21 (WhiteDog): c00.6.3/4 — IPC client (Windows) adds timeout+retry+backoff and CLI exposes `--timeout-ms/--retries/--backoff-ms`; fmt/check clean on nightly.
+- 2025-11-21 (PinkSnow): c00.6.2 — pipe dispatcher returns timed empty SearchResponse with `served_by` host label; status still stubbed; cargo check/clippy clean.
 
 * an **NTFS + USN–driven catalog** for filenames and metadata (Everything‑style),
 * a **Tantivy‑based full‑text engine** for contents,
