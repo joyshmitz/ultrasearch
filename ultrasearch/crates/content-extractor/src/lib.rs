@@ -68,7 +68,7 @@ impl ExtractorStack {
     /// Build a stack optionally including Extractous when the feature is enabled.
     pub fn with_extractous_enabled(enable: bool) -> Self {
         if enable {
-            #[cfg(feature = "extractous-backend")]
+            #[cfg(feature = "extractous_backend")]
             {
                 return Self::new(vec![
                     Box::new(SimpleTextExtractor),
@@ -125,6 +125,37 @@ impl Extractor for NoopExtractor {
             content_lang: None,
             bytes_processed: used,
         })
+    }
+}
+
+#[cfg(feature = "extractous-backend")]
+pub struct ExtractousExtractor;
+
+#[cfg(feature = "extractous-backend")]
+impl ExtractousExtractor {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(feature = "extractous-backend")]
+impl Extractor for ExtractousExtractor {
+    fn name(&self) -> &'static str {
+        "extractous"
+    }
+
+    fn supports(&self, ctx: &ExtractContext) -> bool {
+        ctx.ext_hint
+            .map(|ext| matches!(ext, "pdf" | "docx" | "pptx" | "xlsx"))
+            .unwrap_or(false)
+    }
+
+    fn extract(&self, ctx: &ExtractContext, _key: DocKey) -> Result<ExtractedContent, ExtractError> {
+        Err(ExtractError::Unsupported(format!(
+            "extractous backend not yet implemented for {}",
+            ctx.path
+        )))
+        .map_err(Into::into)
     }
 }
 
@@ -217,6 +248,73 @@ fn is_probably_binary(bytes: &[u8]) -> bool {
         .filter(|&&b| (b < 0x09) || (b > 0x0D && b < 0x20))
         .count();
     ctrl * 20 > sample.len()
+}
+
+#[cfg(feature = "extractous_backend")]
+/// Extractor that delegates to the Extractous engine for rich document types.
+pub struct ExtractousExtractor;
+
+#[cfg(feature = "extractous_backend")]
+impl ExtractousExtractor {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn build_engine(&self, ctx: &ExtractContext) -> extractous::Extractor {
+        let max_chars = ctx.max_chars.min(i32::MAX as usize) as i32;
+        extractous::Extractor::new().set_extract_string_max_length(max_chars)
+    }
+}
+
+#[cfg(feature = "extractous_backend")]
+impl Default for ExtractousExtractor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "extractous_backend")]
+impl Extractor for ExtractousExtractor {
+    fn name(&self) -> &'static str {
+        "extractous"
+    }
+
+    fn supports(&self, ctx: &ExtractContext) -> bool {
+        fs::metadata(ctx.path)
+            .map(|meta| meta.is_file() && meta.len() <= ctx.max_bytes as u64)
+            .unwrap_or(false)
+    }
+
+    fn extract(&self, ctx: &ExtractContext, key: DocKey) -> Result<ExtractedContent, ExtractError> {
+        let path = Path::new(ctx.path);
+        let meta = fs::metadata(path).map_err(|e| ExtractError::Failed(e.to_string()))?;
+
+        let max_bytes = ctx.max_bytes as u64;
+        if meta.len() > max_bytes {
+            return Err(ExtractError::FileTooLarge {
+                bytes: meta.len(),
+                max_bytes,
+            });
+        }
+
+        let engine = self.build_engine(ctx);
+        let (text, _metadata) = engine
+            .extract_file_to_string(ctx.path)
+            .map_err(|e| ExtractError::Failed(e.to_string()))?;
+
+        let byte_len = text.len();
+        let char_len = text.chars().count();
+        let truncated = byte_len > ctx.max_bytes || char_len > ctx.max_chars;
+
+        Ok(ExtractedContent {
+            key,
+            lang: None,
+            content_lang: None,
+            truncated,
+            bytes_processed: byte_len.min(ctx.max_bytes),
+            text,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -381,5 +479,34 @@ mod tests {
         let stack = ExtractorStack::new(vec![]);
         let err = stack.extract(DocKey::from_parts(1, 1), &ctx).unwrap_err();
         assert!(err.to_string().contains("unsupported"));
+    }
+
+    #[test]
+    fn with_extractous_disabled_uses_simple_only() {
+        let stack = ExtractorStack::with_extractous_enabled(false);
+        assert_eq!(stack.backends.len(), 2);
+    }
+
+    #[cfg(feature = "extractous_backend")]
+    #[test]
+    fn extractous_respects_size_limit_and_extracts_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("simple.pdf");
+        std::fs::write(&path, b"just text").unwrap();
+
+        let ctx = ExtractContext {
+            path: path.to_str().unwrap(),
+            max_bytes: 32,
+            max_chars: 32,
+            ext_hint: Some("pdf"),
+            mime_hint: None,
+        };
+
+        let extractor = ExtractousExtractor::new();
+        assert!(extractor.supports(&ctx));
+
+        let out = extractor.extract(&ctx, DocKey::from_parts(1, 2)).unwrap();
+        assert!(!out.truncated);
+        assert_eq!(out.bytes_processed, out.text.len());
     }
 }
