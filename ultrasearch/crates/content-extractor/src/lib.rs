@@ -38,6 +38,8 @@ pub enum ExtractError {
     Unsupported(String),
     #[error("extraction failed: {0}")]
     Failed(String),
+    #[error("file too large (bytes={bytes}, max={max_bytes})")]
+    FileTooLarge { bytes: u64, max_bytes: u64 },
 }
 
 /// Trait implemented by concrete extractor backends.
@@ -119,7 +121,10 @@ impl Extractor for SimpleTextExtractor {
         let path = Path::new(ctx.path);
         let meta = fs::metadata(path).map_err(|e| ExtractError::Failed(e.to_string()))?;
         if meta.len() as usize > ctx.max_bytes {
-            return Err(ExtractError::Unsupported("file too large for simple extractor".into()));
+            return Err(ExtractError::FileTooLarge {
+                bytes: meta.len(),
+                max_bytes: ctx.max_bytes as u64,
+            });
         }
 
         let text_raw = fs::read_to_string(path).map_err(|e| ExtractError::Failed(e.to_string()))?;
@@ -231,6 +236,17 @@ mod tests {
         let (trimmed, truncated) = enforce_limits_str(s, &ctx);
         assert_eq!(trimmed, "01234");
         assert!(truncated);
+    }
+
+    #[test]
+    fn file_too_large_error_formats() {
+        let err = ExtractError::FileTooLarge {
+            bytes: 2,
+            max_bytes: 1,
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("file too large"));
+        assert!(msg.contains("2"));
     }
 
     #[test]

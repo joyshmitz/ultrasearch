@@ -70,6 +70,14 @@ pub fn open_or_create(path: &Path) -> Result<ContentIndex> {
     Ok(ContentIndex { index, fields })
 }
 
+/// Create an in-memory index for tests and benchmarks.
+pub fn create_in_ram() -> Result<ContentIndex> {
+    let (schema, fields) = build_schema();
+    let dir = tantivy::directory::RamDirectory::create();
+    let index = Index::create(dir, schema)?;
+    Ok(ContentIndex { index, fields })
+}
+
 #[derive(Debug, Clone)]
 pub struct WriterConfig {
     pub heap_size_bytes: usize,
@@ -134,4 +142,58 @@ pub fn to_document(doc: &ContentDoc, fields: &ContentFields) -> tantivy::Documen
     }
     d.add_text(fields.content, &doc.content);
     d
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tantivy::schema::Value;
+
+    #[test]
+    fn schema_has_expected_fields() {
+        let (schema, fields) = build_schema();
+        for f in [
+            fields.doc_key,
+            fields.volume,
+            fields.name,
+            fields.path,
+            fields.ext,
+            fields.size,
+            fields.modified,
+            fields.content_lang,
+            fields.content,
+        ] {
+            assert!(schema.get_field_entry(f).name().len() > 0);
+        }
+    }
+
+    #[test]
+    fn to_document_sets_key_and_content() {
+        let (_, fields) = build_schema();
+        let doc = ContentDoc {
+            key: DocKey::from_parts(1, 2),
+            volume: 1,
+            name: Some("file.txt".into()),
+            path: Some(r"C:\file.txt".into()),
+            ext: Some("txt".into()),
+            size: 10,
+            modified: 123,
+            content_lang: Some("en".into()),
+            content: "hello world".into(),
+        };
+        let tantivy_doc = to_document(&doc, &fields);
+        let vals: Vec<_> = tantivy_doc.get_all(fields.doc_key).cloned().collect();
+        assert_eq!(vals.len(), 1);
+        match &vals[0] {
+            Value::U64(v) => assert_eq!(*v, doc.key.0),
+            other => panic!("unexpected value {:?}", other),
+        }
+    }
+
+    #[test]
+    fn create_ram_index_works() {
+        let idx = create_in_ram().unwrap();
+        let reader = open_reader(&idx).unwrap();
+        assert_eq!(reader.searcher().num_docs(), 0);
+    }
 }

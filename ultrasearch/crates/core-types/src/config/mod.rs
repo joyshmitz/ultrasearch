@@ -441,4 +441,26 @@ mod tests {
         assert!(!cfg.metrics.request_latency_buckets.is_empty());
         assert_eq!(cfg.metrics.worker_failure_threshold, 3);
     }
+
+    #[test]
+    fn scheduler_defaults_match_docs() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.scheduler.idle_warm_seconds, 15);
+        assert_eq!(cfg.scheduler.idle_deep_seconds, 60);
+        assert_eq!(cfg.scheduler.max_records_per_tick, 10_000);
+        assert_eq!(cfg.scheduler.usn_chunk_bytes, 1_024 * 1_024);
+        assert_eq!(cfg.scheduler.cpu_soft_limit_pct, 50);
+        assert_eq!(cfg.scheduler.cpu_hard_limit_pct, 80);
+    }
+
+    #[test]
+    fn extract_section_alias_for_max_chars() {
+        // Ensure legacy "max_chars" still deserializes via alias.
+        let toml_str = r#"""
+            [extract]
+            max_chars = 12345
+        """#;
+        let cfg: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.extract.max_chars_per_file, 12_345);
+    }
 }
