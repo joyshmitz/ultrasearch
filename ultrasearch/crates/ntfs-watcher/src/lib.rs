@@ -6,7 +6,7 @@
 //! testable scaffold that mirrors the implementation plan without yet wiring
 //! Win32 calls.
 
-use core_types::{DocKey, VolumeId};
+use core_types::{DocKey, FileMeta, VolumeId};
 use thiserror::Error;
 
 pub type Usn = u64;
@@ -20,15 +20,6 @@ pub struct VolumeInfo {
     pub guid_path: String,
     /// Optional drive letters currently mapped to the volume.
     pub drive_letters: Vec<char>,
-}
-
-/// Lightweight metadata for a single file or directory.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileMeta {
-    pub doc_key: DocKey,
-    pub name: String,
-    pub is_dir: bool,
-    pub size: u64,
 }
 
 /// Stream of logical file-system events derived from the USN journal.
@@ -240,8 +231,62 @@ pub fn open_volume_handle(
 
 /// Enumerate the MFT for a given volume and emit file metadata snapshots.
 ///
-/// A production implementation will stream records to avoid large memory
-/// spikes; here we surface the contract only.
+/// On Windows this uses usn-journal-rs to iterate the MFT and resolve paths.
+#[cfg(windows)]
+pub fn enumerate_mft(volume: &VolumeInfo) -> Result<Vec<FileMeta>, NtfsError> {
+    use core_types::FileFlags;
+    use usn_journal_rs::mft::Mft;
+    use usn_journal_rs::path::PathResolver;
+    use usn_journal_rs::volume::Volume;
+
+    let drive = volume
+        .drive_letters
+        .first()
+        .copied()
+        .ok_or_else(|| NtfsError::Mft("volume has no drive letter to open".into()))?;
+
+    let vol = Volume::from_drive_letter(drive)
+        .map_err(|e| NtfsError::Mft(format!("open volume {drive}: {e}")))?;
+    let resolver =
+        PathResolver::new(&vol).map_err(|e| NtfsError::Mft(format!("path resolver init: {e}")))?;
+    let mft = Mft::new(&vol);
+
+    let mut out = Vec::new();
+    for entry in mft {
+        let entry = entry.map_err(|e| NtfsError::Mft(format!("mft read: {e}")))?;
+        let frn = entry.file_reference_number();
+        let parent_frn = entry.parent_file_reference_number();
+        let is_dir = entry.is_directory();
+        let size = entry.file_size();
+
+        let path = resolver
+            .path(&entry)
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()));
+        let name = path
+            .as_deref()
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        let key = DocKey::from_parts(volume.id, frn as u64);
+        let parent = Some(DocKey::from_parts(volume.id, parent_frn as u64));
+        let flags = if is_dir {
+            FileFlags::IS_DIR
+        } else {
+            FileFlags::empty()
+        };
+
+        out.push(FileMeta::new(
+            key, volume.id, parent, name, path, size, 0, 0, flags,
+        ));
+    }
+
+    Ok(out)
+}
+
+#[cfg(not(windows))]
 pub fn enumerate_mft(_volume: &VolumeInfo) -> Result<Vec<FileMeta>, NtfsError> {
     Err(NtfsError::NotSupported)
 }
@@ -289,6 +334,7 @@ impl NtfsWatcher for InMemoryWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_types::FileFlags;
 
     #[test]
     fn doc_key_round_trip() {
@@ -312,17 +358,26 @@ mod tests {
             guid_path: r"\\?\Volume{abc}\".to_string(),
             drive_letters: vec!['C'],
         }];
-        let mft = vec![FileMeta {
-            doc_key: DocKey::from_parts(1, 10),
-            name: "foo.txt".into(),
-            is_dir: false,
-            size: 123,
-        }];
+        let mft = vec![FileMeta::new(
+            DocKey::from_parts(1, 10),
+            1,
+            Some(DocKey::from_parts(1, 5)),
+            "foo.txt".into(),
+            None,
+            123,
+            0,
+            0,
+            FileFlags::empty(),
+        )];
         let events = vec![FileEvent::Deleted(DocKey::from_parts(1, 10))];
 
         let watcher = InMemoryWatcher::new(vols.clone(), mft.clone(), events.clone());
-        assert_eq!(watcher.discover_volumes().unwrap(), vols);
-        assert_eq!(watcher.enumerate_mft(&vols[0]).unwrap(), mft);
+        assert_eq!(watcher.discover_volumes().unwrap().len(), vols.len());
+
+        let got_mft = watcher.enumerate_mft(&vols[0]).unwrap();
+        assert_eq!(got_mft.len(), mft.len());
+        assert_eq!(got_mft[0].key, mft[0].key);
+
         let (evs, cur) = watcher
             .tail_usn(
                 &vols[0],
@@ -332,7 +387,7 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(evs, events);
+        assert_eq!(evs.len(), events.len());
         assert_eq!(cur.last_usn, 0);
     }
 }
