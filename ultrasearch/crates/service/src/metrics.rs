@@ -2,8 +2,10 @@
 
 use anyhow::Result;
 use core_types::config::MetricsSection;
+use ipc::MetricsSnapshot;
 use once_cell::sync::Lazy;
 use prometheus::{Encoder, Histogram, HistogramOpts, IntCounter, Registry, TextEncoder, opts};
+use std::sync::{Arc, OnceLock};
 
 /// Shared metrics handle for the service.
 pub struct ServiceMetrics {
@@ -107,6 +109,33 @@ pub fn scrape_metrics(metrics: &ServiceMetrics) -> Result<Vec<u8>> {
     let metric_families = metrics.registry.gather();
     ENCODER.encode(&metric_families, &mut buffer)?;
     Ok(buffer)
+}
+
+static GLOBAL_METRICS: OnceLock<Arc<ServiceMetrics>> = OnceLock::new();
+
+/// Set the global metrics handle so other modules (IPC/status) can emit snapshots.
+pub fn set_global_metrics(metrics: Arc<ServiceMetrics>) {
+    let _ = GLOBAL_METRICS.set(metrics);
+}
+
+/// Render an IPC-facing metrics snapshot using the global handle, optionally annotating queue depth/active workers.
+pub fn global_metrics_snapshot(
+    queue_depth: Option<u64>,
+    active_workers: Option<u32>,
+) -> Option<MetricsSnapshot> {
+    if let Some(m) = GLOBAL_METRICS.get() {
+        let snap = m.snapshot_with_queue_state(queue_depth, active_workers);
+        Some(MetricsSnapshot {
+            search_latency_ms_p50: snap.search_latency_ms_p50,
+            search_latency_ms_p95: snap.search_latency_ms_p95,
+            worker_cpu_pct: None,
+            worker_mem_bytes: None,
+            queue_depth: snap.queue_depth,
+            active_workers: snap.active_workers,
+        })
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
