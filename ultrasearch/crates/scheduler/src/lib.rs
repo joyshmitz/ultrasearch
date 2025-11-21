@@ -229,7 +229,7 @@ pub fn select_jobs(
 fn idle_elapsed_ms() -> Option<u64> {
     use windows::Win32::UI::WindowsAndMessaging::GetLastInputInfo;
     use windows::Win32::UI::WindowsAndMessaging::LASTINPUTINFO;
-    use windows::Win32::Foundation::GetTickCount;
+    use windows::Win32::System::SystemInformation::GetTickCount;
 
     let mut info = LASTINPUTINFO {
         cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,

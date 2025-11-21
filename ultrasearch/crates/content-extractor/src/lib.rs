@@ -17,6 +17,8 @@ pub struct ExtractedContent {
     pub text: String,
     pub lang: Option<String>,
     pub truncated: bool,
+    pub content_lang: Option<String>,
+    pub bytes_processed: usize,
 }
 
 /// Context passed to extractors (paths, limits, hints).
@@ -26,6 +28,7 @@ pub struct ExtractContext<'a> {
     pub max_bytes: usize,
     pub max_chars: usize,
     pub ext_hint: Option<&'a str>,
+    pub mime_hint: Option<&'a str>,
 }
 
 /// Extraction error categories.
@@ -88,6 +91,8 @@ impl Extractor for NoopExtractor {
             text: String::new(),
             lang: None,
             truncated,
+            content_lang: None,
+            bytes_processed: 0,
         })
     }
 }
@@ -127,6 +132,8 @@ impl Extractor for SimpleTextExtractor {
             text,
             lang: None,
             truncated,
+            content_lang: None,
+            bytes_processed: meta.len() as usize,
         })
     }
 }
@@ -139,6 +146,17 @@ pub fn enforce_char_limit(text: &str, max_chars: usize) -> (String, bool) {
     } else {
         (text.to_string(), false)
     }
+}
+
+/// Utility to enforce both byte and char limits, returning None if too large.
+pub fn enforce_limits(path: &Path, ctx: &ExtractContext) -> Result<Option<String>, ExtractError> {
+    let meta = fs::metadata(path).map_err(|e| ExtractError::Failed(e.to_string()))?;
+    if meta.len() as usize > ctx.max_bytes {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path).map_err(|e| ExtractError::Failed(e.to_string()))?;
+    let (text, truncated) = enforce_char_limit(&text, ctx.max_chars);
+    Ok(Some(text))
 }
 
 #[cfg(test)]

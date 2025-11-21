@@ -7,6 +7,7 @@
 
 use core_types::DocKey;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Fields that can be targeted explicitly in the query language.
@@ -84,6 +85,8 @@ pub struct SearchRequest {
     pub query: QueryExpr,
     pub limit: u32,
     pub mode: SearchMode,
+    #[serde(default)]
+    pub timeout: Option<Duration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,13 +119,25 @@ pub struct VolumeStatus {
     pub volume: u16,
     pub indexed_files: u64,
     pub pending_files: u64,
+    pub last_usn: Option<u64>,
+    pub journal_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusResponse {
     pub id: Uuid,
     pub volumes: Vec<VolumeStatus>,
+    pub last_index_commit_ts: Option<i64>,
     pub scheduler_state: String,
+    pub metrics: Option<MetricsSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsSnapshot {
+    pub search_latency_ms_p50: Option<f64>,
+    pub search_latency_ms_p95: Option<f64>,
+    pub worker_cpu_pct: Option<f64>,
+    pub worker_mem_bytes: Option<u64>,
 }
 
 #[cfg(test)]

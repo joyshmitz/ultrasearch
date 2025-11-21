@@ -68,6 +68,20 @@ pub struct MetaDoc {
     pub flags: u64,
 }
 
+/// Add a batch of documents to the index writer.
+///
+/// Caller is responsible for committing/merging outside.
+pub fn add_batch(
+    writer: &mut IndexWriter,
+    fields: &MetaFields,
+    docs: impl IntoIterator<Item = MetaDoc>,
+) -> Result<()> {
+    for doc in docs {
+        writer.add_document(to_document(&doc, fields));
+    }
+    Ok(())
+}
+
 /// Convenience handle bundling an index with its field set.
 #[derive(Debug)]
 pub struct MetaIndex {
@@ -142,6 +156,63 @@ pub fn to_document(doc: &MetaDoc, fields: &MetaFields) -> tantivy::Document {
     d.add_i64(fields.modified, doc.modified);
     d.add_u64(fields.flags, doc.flags);
     d
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tantivy::directory::RamDirectory;
+
+    #[test]
+    fn add_and_read_round_trip() -> Result<()> {
+        let dir = RamDirectory::create();
+        let (schema, fields) = build_schema();
+        let index = Index::create(dir, schema)?;
+        let mut writer = index.writer(50_000_000)?;
+
+        let docs = vec![
+            MetaDoc {
+                key: DocKey::from_parts(1, 10),
+                volume: 1,
+                name: "foo.txt".into(),
+                path: Some("C:\\foo.txt".into()),
+                ext: Some("txt".into()),
+                size: 123,
+                created: 1_700_000_000,
+                modified: 1_700_000_100,
+                flags: 0,
+            },
+            MetaDoc {
+                key: DocKey::from_parts(2, 20),
+                volume: 2,
+                name: "bar.md".into(),
+                path: Some("C:\\bar.md".into()),
+                ext: Some("md".into()),
+                size: 456,
+                created: 1_700_000_200,
+                modified: 1_700_000_300,
+                flags: 0,
+            },
+        ];
+
+        add_batch(&mut writer, &fields, docs.clone())?;
+        writer.commit()?;
+
+        let reader = index
+            .reader_builder()
+            .reload_policy(tantivy::ReloadPolicy::OnCommit)
+            .try_into()?;
+        let searcher = reader.searcher();
+
+        let all = tantivy::query::AllQuery;
+        let top_docs = searcher.search(&all, &tantivy::collector::TopDocs::with_limit(10))?;
+        assert_eq!(top_docs.len(), 2);
+
+        let doc = searcher.doc(top_docs[0].1)?;
+        let doc_key = doc.get_first(fields.doc_key).unwrap().as_u64().unwrap();
+        assert!(doc_key == docs[0].key.0 || doc_key == docs[1].key.0);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

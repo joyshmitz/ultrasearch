@@ -126,6 +126,10 @@ pub struct MetricsSection {
     pub push_interval_secs: u64,
     #[serde(default = "default_sample_interval")]
     pub sample_interval_secs: u64,
+    #[serde(default = "default_latency_buckets")]
+    pub request_latency_buckets: Vec<f64>,
+    #[serde(default = "default_worker_failure_threshold")]
+    pub worker_failure_threshold: u64,
 }
 
 impl Default for MetricsSection {
@@ -135,6 +139,8 @@ impl Default for MetricsSection {
             bind: default_metrics_bind(),
             push_interval_secs: default_push_interval(),
             sample_interval_secs: default_sample_interval(),
+            request_latency_buckets: default_latency_buckets(),
+            worker_failure_threshold: default_worker_failure_threshold(),
         }
     }
 }
@@ -147,6 +153,12 @@ fn default_push_interval() -> u64 {
 }
 fn default_sample_interval() -> u64 {
     10
+}
+fn default_latency_buckets() -> Vec<f64> {
+    vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]
+}
+fn default_worker_failure_threshold() -> u64 {
+    3
 }
 
 /// Feature flags toggling advanced modules.
@@ -409,5 +421,12 @@ mod tests {
         override_cfg.logging.level = "debug".into();
         let merged = merge(base, override_cfg);
         assert_eq!(merged.logging.level, "debug");
+    }
+
+    #[test]
+    fn metrics_defaults_include_buckets_and_threshold() {
+        let cfg = AppConfig::default();
+        assert!(!cfg.metrics.request_latency_buckets.is_empty());
+        assert_eq!(cfg.metrics.worker_failure_threshold, 3);
     }
 }

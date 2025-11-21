@@ -170,7 +170,7 @@ mod tests {
             10,
             0,
             0,
-            FileFlags::IS_DIR.complement(),
+            FileFlags::empty(),
         );
         assert_eq!(fm.ext.as_deref(), Some("pdf"));
     }
