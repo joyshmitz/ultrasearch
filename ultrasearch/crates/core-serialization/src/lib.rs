@@ -1,15 +1,16 @@
 //! Common serialization helpers shared across the workspace.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use core_types::{DocKey, FileId, VolumeId};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use rkyv::{
-    ser::{serializers::AllocSerializer, Serializer},
     AlignedVec, Archive, CheckBytes, Deserialize as RDeserialize, Serialize as RSerialize,
+    ser::{Serializer, serializers::AllocSerializer},
 };
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Minimal wire-safe representation of a document key.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Archive, RSerialize, RDeserialize)]
+#[archive(check_bytes)]
 pub struct DocKeyWire {
     pub volume: VolumeId,
     pub file: FileId,
@@ -44,7 +45,9 @@ where
     T: RSerialize<AllocSerializer<1024>>,
 {
     let mut serializer = AllocSerializer::<1024>::default();
-    serializer.serialize_value(value).context("rkyv serialize")?;
+    serializer
+        .serialize_value(value)
+        .context("rkyv serialize")?;
     Ok(serializer.into_serializer().into_inner())
 }
 
@@ -52,9 +55,11 @@ where
 pub fn from_rkyv_bytes<T>(bytes: &[u8]) -> Result<T>
 where
     T: Archive,
-    T::Archived: CheckBytes<rkyv::validation::validators::DefaultValidator<'_>> + RDeserialize<T, rkyv::Infallible>,
+    T::Archived: CheckBytes<rkyv::validation::validators::DefaultValidator<'_>>
+        + RDeserialize<T, rkyv::Infallible>,
 {
-    let archived = rkyv::check_archived_root::<T>(bytes).context("rkyv check")?;
+    let archived = rkyv::check_archived_root::<T>(bytes)
+        .map_err(|e| anyhow!("rkyv check failed: {e:?}"))?;
     archived
         .deserialize(&mut rkyv::Infallible)
         .map_err(|_| anyhow!("rkyv deserialize failed"))
@@ -93,10 +98,7 @@ mod tests {
     #[test]
     fn rkyv_helpers_work() {
         let s = Small {
-            key: DocKeyWire {
-                volume: 3,
-                file: 7,
-            },
+            key: DocKeyWire { volume: 3, file: 7 },
             flag: true,
         };
         let bytes = to_rkyv_bytes(&s).unwrap();

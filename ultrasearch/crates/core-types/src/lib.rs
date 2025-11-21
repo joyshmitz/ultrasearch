@@ -3,7 +3,6 @@
 //! These types intentionally avoid heavy dependencies and aim to be
 //! serialization-friendly for rkyv/bincode and IPC payloads.
 
-use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -62,8 +61,8 @@ impl FromStr for DocKey {
     }
 }
 
-bitflags! {
-    #[derive(Serialize, Deserialize)]
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
     pub struct FileFlags: u32 {
         const IS_DIR   = 0b0000_0001;
         const HIDDEN   = 0b0000_0010;
@@ -77,7 +76,7 @@ bitflags! {
 
 /// Minimal metadata carried through indexing pipelines.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct FileMeta {
+pub struct FileMeta {
     pub key: DocKey,
     pub volume: VolumeId,
     pub parent: Option<DocKey>,
@@ -92,6 +91,7 @@ bitflags! {
 
 impl FileMeta {
     /// Create a new FileMeta, deriving extension if not provided.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         key: DocKey,
         volume: VolumeId,
@@ -103,7 +103,9 @@ impl FileMeta {
         modified: Timestamp,
         flags: FileFlags,
     ) -> Self {
-        let ext = name.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase());
+        let ext = name
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase());
         Self {
             key,
             volume,
