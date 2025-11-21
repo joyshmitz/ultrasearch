@@ -7,7 +7,7 @@ pub struct SystemLoad {
     pub cpu_percent: f32,
     pub mem_used_percent: f32,
     /// Aggregate disk throughput in bytes/sec since the previous sample.
-    /// sysinfo 0.30 does not expose disk IO counters on `System`; keep field for forward compat.
+    /// Placeholders until sysinfo exposes disk IO counters in the chosen feature set.
     pub disk_bytes_per_sec: u64,
     pub disk_busy: bool,
     /// Duration covered by this sample (useful for metrics surfaces).
@@ -59,10 +59,9 @@ impl SystemLoadSampler {
         let total_mem = self.system.total_memory().max(1);
         let mem_used_percent = (self.system.used_memory() as f32 / total_mem as f32) * 100.0;
 
-        // sysinfo currently lacks aggregate disk IO counters at the System level.
-        // Keep the hook so we can enable it when available.
-        let disk_bytes_per_sec = 0;
-        let disk_busy = disk_bytes_per_sec >= self.disk_busy_threshold_bps;
+        // Disk IO placeholders (sysinfo 0.30 lacks per-System IO counters in this build).
+        let disk_bytes_per_sec = 0u64;
+        let disk_busy = false;
 
         self.last_sample = now;
 
