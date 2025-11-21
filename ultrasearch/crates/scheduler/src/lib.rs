@@ -1,101 +1,16 @@
-//! Scheduler primitives: idle detection and system load sampling.
-//!
-//! This crate provides lightweight building blocks for the service:
-//! - `IdleTracker`: classifies user activity into Active/WarmIdle/DeepIdle using
-//!   GetLastInputInfo on Windows with configurable thresholds.
-//! - `SystemLoadSampler`: periodically samples CPU/memory/disk load via `sysinfo`.
-//! - Stubs for job selection that will later consume queues and thresholds.
-//!
-//! The actual scheduling loop lives in the service crate; this crate just owns
-//! reusable sampling logic.
+//! Scheduler primitives: idle detection, system load sampling, job queues, and
+//! small policy helpers for background work. The service crate orchestrates
+//! execution; this crate keeps the decision logic testable and self-contained.
+
+pub mod idle;
+pub mod metrics;
+
+pub use idle::{IdleSample, IdleState, IdleTracker};
+pub use metrics::{SystemLoad, SystemLoadSampler};
 
 use core_types::DocKey;
 use std::collections::VecDeque;
-use std::time::Instant;
-#[cfg(target_os = "windows")]
-use tracing::warn;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IdleState {
-    Active,
-    WarmIdle,
-    DeepIdle,
-}
-
-/// Tracks user idle time based on GetLastInputInfo (Windows).
-pub struct IdleTracker {
-    warm_idle_ms: u64,
-    deep_idle_ms: u64,
-}
-
-impl IdleTracker {
-    /// Create a tracker with thresholds in milliseconds.
-    pub fn new(warm_idle_ms: u64, deep_idle_ms: u64) -> Self {
-        Self {
-            warm_idle_ms,
-            deep_idle_ms,
-        }
-    }
-
-    /// Sample current idle state.
-    pub fn sample(&self) -> IdleState {
-        match idle_elapsed_ms() {
-            None => IdleState::Active,
-            Some(elapsed) if elapsed >= self.deep_idle_ms => IdleState::DeepIdle,
-            Some(elapsed) if elapsed >= self.warm_idle_ms => IdleState::WarmIdle,
-            _ => IdleState::Active,
-        }
-    }
-}
-
-/// System load snapshot.
-#[derive(Debug, Clone, Copy)]
-pub struct SystemLoad {
-    pub cpu_percent: f32,
-    pub mem_used_percent: f32,
-    pub disk_busy: bool,
-}
-
-pub struct SystemLoadSampler {
-    sys: sysinfo::System,
-    /// Bytes/sec threshold to consider disk busy.
-    pub disk_busy_threshold: u64,
-    last_sample: Instant,
-}
-
-impl SystemLoadSampler {
-    pub fn new(disk_busy_threshold: u64) -> Self {
-        let mut sys = sysinfo::System::new();
-        sys.refresh_cpu();
-        sys.refresh_memory();
-
-        Self {
-            sys,
-            disk_busy_threshold,
-            last_sample: Instant::now(),
-        }
-    }
-
-    pub fn sample(&mut self) -> SystemLoad {
-        self.sys.refresh_cpu();
-        self.sys.refresh_memory();
-
-        let now = Instant::now();
-
-        let cpu_percent = self.sys.global_cpu_info().cpu_usage();
-        let total = self.sys.total_memory().max(1);
-        let mem_used_percent = (self.sys.used_memory() as f32 / total as f32) * 100.0;
-
-        self.last_sample = now;
-        let disk_busy = false; // disk metrics unavailable with current sysinfo build
-
-        SystemLoad {
-            cpu_percent,
-            mem_used_percent,
-            disk_busy,
-        }
-    }
-}
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub enum Job {
@@ -156,6 +71,10 @@ impl JobQueues {
 
     pub fn len(&self) -> usize {
         self.critical.len() + self.metadata.len() + self.content.len()
+    }
+
+    pub fn counts(&self) -> (usize, usize, usize) {
+        (self.critical.len(), self.metadata.len(), self.content.len())
     }
 }
 
@@ -224,57 +143,102 @@ pub fn allow_content_jobs(idle: IdleState, load: SystemLoad) -> bool {
     matches!(idle, IdleState::DeepIdle) && load.cpu_percent < 40.0 && !load.disk_busy
 }
 
-#[cfg(target_os = "windows")]
-fn idle_elapsed_ms() -> Option<u64> {
-    use windows::Win32::Foundation::LASTINPUTINFO;
-    use windows::Win32::System::SystemInformation::GetTickCount64;
-    use windows::Win32::UI::Input::KeyboardAndMouse::GetLastInputInfo;
-
-    // SAFETY: GetLastInputInfo requires a properly initialized struct.
-    unsafe {
-        let mut info = LASTINPUTINFO {
-            cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
-            dwTime: 0,
-        };
-        if GetLastInputInfo(&mut info).as_bool() {
-            let now = GetTickCount64() as u64;
-            let last = info.dwTime as u64;
-            // Handle potential tick wrap gracefully.
-            return now.checked_sub(last);
-        }
-    }
-    warn!("GetLastInputInfo failed; treating as active");
-    None
+/// Static policy inputs used across scheduler beads.
+#[derive(Debug, Clone)]
+pub struct SchedulerConfig {
+    pub warm_idle: Duration,
+    pub deep_idle: Duration,
+    pub cpu_metadata_max: f32,
+    pub cpu_content_max: f32,
+    pub disk_busy_threshold_bps: u64,
+    pub metadata_budget: Budget,
+    pub content_budget: Budget,
+    pub content_spawn_backlog: usize,
+    pub content_spawn_cooldown: Duration,
+    pub content_batch_size: usize,
 }
 
-#[cfg(not(target_os = "windows"))]
-fn idle_elapsed_ms() -> Option<u64> {
-    // Non-Windows placeholder; treat as always active for now.
-    None
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            warm_idle: Duration::from_secs(15),
+            deep_idle: Duration::from_secs(60),
+            cpu_metadata_max: 60.0,
+            cpu_content_max: 40.0,
+            disk_busy_threshold_bps: 10 * 1024 * 1024, // placeholder: 10 MiB/s
+            metadata_budget: Budget {
+                max_files: 256,
+                max_bytes: 64 * 1024 * 1024,
+            },
+            content_budget: Budget {
+                max_files: 64,
+                max_bytes: 512 * 1024 * 1024,
+            },
+            content_spawn_backlog: 200,
+            content_spawn_cooldown: Duration::from_secs(30),
+            content_batch_size: 500,
+        }
+    }
+}
+
+/// Combined snapshot of scheduler inputs and queue sizes for UI/status surfaces.
+#[derive(Debug, Clone)]
+pub struct SchedulerState {
+    pub idle: IdleSample,
+    pub load: SystemLoad,
+    pub queues_critical: usize,
+    pub queues_metadata: usize,
+    pub queues_content: usize,
+}
+
+/// Decide whether to spawn a content worker.
+pub fn should_spawn_content_worker(
+    backlog: usize,
+    idle: IdleState,
+    load: SystemLoad,
+    config: &SchedulerConfig,
+    last_spawn: Option<Instant>,
+) -> bool {
+    if backlog == 0 || load.disk_busy || load.cpu_percent >= config.cpu_content_max {
+        return false;
+    }
+    if !matches!(idle, IdleState::DeepIdle) {
+        return false;
+    }
+    if backlog < config.content_spawn_backlog {
+        return false;
+    }
+    if let Some(prev) = last_spawn
+        && prev.elapsed() < config.content_spawn_cooldown
+    {
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn content_jobs_blocked_when_not_deep_idle() {
-        let load = SystemLoad {
+    fn load_ok() -> SystemLoad {
+        SystemLoad {
             cpu_percent: 10.0,
             mem_used_percent: 10.0,
             disk_busy: false,
-        };
-        assert!(!allow_content_jobs(IdleState::WarmIdle, load));
-        assert!(allow_content_jobs(IdleState::DeepIdle, load));
+            disk_bytes_per_sec: 0,
+            sample_duration: Duration::from_secs(1),
+        }
+    }
+
+    #[test]
+    fn content_jobs_blocked_when_not_deep_idle() {
+        assert!(!allow_content_jobs(IdleState::WarmIdle, load_ok()));
+        assert!(allow_content_jobs(IdleState::DeepIdle, load_ok()));
     }
 
     #[test]
     fn metadata_jobs_respect_cpu_and_disk() {
-        let load = SystemLoad {
-            cpu_percent: 50.0,
-            mem_used_percent: 10.0,
-            disk_busy: false,
-        };
+        let load = load_ok();
         assert!(allow_metadata_jobs(IdleState::WarmIdle, load));
 
         let busy = SystemLoad {
@@ -307,11 +271,7 @@ mod tests {
         let selected = select_jobs(
             &mut queues,
             IdleState::DeepIdle,
-            SystemLoad {
-                cpu_percent: 10.0,
-                mem_used_percent: 10.0,
-                disk_busy: false,
-            },
+            load_ok(),
             Budget {
                 max_files: 1,
                 max_bytes: 8,
@@ -335,19 +295,55 @@ mod tests {
             50,
         );
 
+        let mut load = load_ok();
+        load.cpu_percent = 95.0;
+        load.mem_used_percent = 90.0;
+        load.disk_busy = true;
+
         let selected = select_jobs(
             &mut queues,
             IdleState::Active,
-            SystemLoad {
-                cpu_percent: 95.0,
-                mem_used_percent: 90.0,
-                disk_busy: true,
-            },
+            load,
             Budget {
                 max_files: 10,
                 max_bytes: 1_000,
             },
         );
         assert!(selected.iter().any(|j| matches!(j, Job::Delete(_))));
+    }
+
+    #[test]
+    fn spawn_content_worker_honors_backlog_and_cooldown() {
+        let cfg = SchedulerConfig {
+            content_spawn_backlog: 5,
+            content_spawn_cooldown: Duration::from_secs(10),
+            cpu_content_max: 40.0,
+            ..Default::default()
+        };
+
+        assert!(!should_spawn_content_worker(
+            3,
+            IdleState::DeepIdle,
+            load_ok(),
+            &cfg,
+            None
+        ));
+
+        assert!(should_spawn_content_worker(
+            10,
+            IdleState::DeepIdle,
+            load_ok(),
+            &cfg,
+            None
+        ));
+
+        let just_spawned = Instant::now();
+        assert!(!should_spawn_content_worker(
+            10,
+            IdleState::DeepIdle,
+            load_ok(),
+            &cfg,
+            Some(just_spawned)
+        ));
     }
 }

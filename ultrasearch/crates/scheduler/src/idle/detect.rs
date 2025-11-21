@@ -38,7 +38,7 @@ impl IdleTracker {
 
 impl<F> IdleTracker<F>
 where
-    F: Fn() -> Option<u64>,
+    F: FnMut() -> Option<u64>,
 {
     /// Build a tracker with a custom idle-time reader (handy for tests).
     pub fn with_reader(warm_idle: Duration, deep_idle: Duration, reader: F) -> Self {
@@ -129,7 +129,10 @@ mod tests {
         let warm = Duration::from_secs(15);
         let deep = Duration::from_secs(60);
 
-        assert_eq!(classify_idle(Duration::from_secs(0), warm, deep), IdleState::Active);
+        assert_eq!(
+            classify_idle(Duration::from_secs(0), warm, deep),
+            IdleState::Active
+        );
         assert_eq!(
             classify_idle(Duration::from_secs(20), warm, deep),
             IdleState::WarmIdle
