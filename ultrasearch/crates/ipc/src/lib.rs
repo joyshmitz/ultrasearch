@@ -15,6 +15,7 @@ mod duration_ms {
     use serde::{Deserialize, Deserializer, Serializer, de::IntoDeserializer};
     use std::time::Duration;
 
+    #[allow(dead_code)]
     pub fn serialize<S>(dur: &Duration, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,

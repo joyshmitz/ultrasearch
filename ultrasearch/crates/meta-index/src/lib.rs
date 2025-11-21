@@ -14,6 +14,8 @@ use tantivy::{Index, IndexWriter, schema::document::TantivyDocument, schema::*};
 #[cfg(test)]
 use tantivy::{IndexSettings, ReloadPolicy};
 
+pub mod cache;
+
 /// Fields used in the metadata index.
 #[derive(Debug, Clone)]
 pub struct MetaFields {

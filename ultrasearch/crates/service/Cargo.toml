@@ -25,6 +25,9 @@ prometheus = "0.13"
 uuid = { workspace = true }
 bincode = { workspace = true }
 tantivy = { workspace = true }
+slotmap.workspace = true
+lasso = "0.7.3"
+lru.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }

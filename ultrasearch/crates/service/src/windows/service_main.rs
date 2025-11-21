@@ -71,7 +71,7 @@ where
     // We load config here because we are in a clean thread/process context.
     // In a real service, environment variables might be tricky, so loading from file is best.
     let cfg = core_types::config::load_or_create_config(None)?;
-    
+
     let result = crate::bootstrap::run_app(&cfg, shutdown_rx);
 
     // Report exit status.
@@ -120,10 +120,10 @@ where
     // Store the app logic in a static so the FFI callback can access it?
     // Actually, `windows-service` doesn't easily support passing closure to the service main.
     // We might need to invert this: `service_main` calls `app_logic` which we put in a global.
-    
+
     // For now, let's simplify. We will just define the `ffi_service_main` here and have it call
     // a simpler "inner" service main that runs the reactor.
-    
+
     service_dispatcher::start(SERVICE_NAME, ffi_service_main).map_err(|e| e.into())
 }
 
@@ -140,4 +140,3 @@ where
 // Alternative: Just hardcode the logic call in `my_service_main`.
 // We can move the logic currently in `main.rs` to `lib.rs` (e.g. `bootstrap.rs`).
 // Then `my_service_main` calls `bootstrap::run(shutdown_rx)`.
-

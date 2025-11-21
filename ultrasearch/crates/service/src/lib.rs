@@ -1,13 +1,5 @@
 //! Service support library: tracing/logging bootstrap and metrics helpers.
 
-mod logging;
-pub mod meta_ingest;
-pub mod metrics;
-pub mod priority;
-pub mod scheduler_runtime;
-pub mod search_handler;
-pub mod status;
-pub mod status_provider;
 pub mod bootstrap;
 
 #[cfg(windows)]

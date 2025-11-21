@@ -10,4 +10,8 @@ description = "Tantivy-based filename and metadata index for UltraSearch"
 core-types = { path = "../core-types" }
 anyhow = { workspace = true }
 tantivy = { workspace = true }
-tracing = { workspace = true }
+lru = { workspace = true }
+ahash = { workspace = true }
+slotmap = { workspace = true }
+lasso = { workspace = true }
+regex = "1.10"

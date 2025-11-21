@@ -33,7 +33,7 @@ fn main() -> Result<()> {
 
     // Fallback (Linux or --console): run directly.
     tracing::info!("Running in console mode. Press Ctrl+C to stop.");
-    
+
     let (tx, rx) = mpsc::channel(1);
 
     // Spawn a thread to catch Ctrl+C and signal shutdown
@@ -41,7 +41,7 @@ fn main() -> Result<()> {
         // We build a minimal runtime just for the signal handler
         if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
-            .build() 
+            .build()
         {
             rt.block_on(async {
                 if tokio::signal::ctrl_c().await.is_ok() {

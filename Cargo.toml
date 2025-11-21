@@ -73,6 +73,7 @@ ahash = "*"
 indexmap = { version = "*", features = ["serde"] }
 lru = "*"
 slotmap = "*"
+lasso = "*"
 bumpalo = "*"
 clap = { version = "*", features = ["derive", "env"] }
 console = "*"

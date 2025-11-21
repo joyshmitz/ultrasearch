@@ -36,7 +36,10 @@ pub fn init_tracing_with_config(
         other => {
             // "size" or unknown fallback to daily for now.
             // TODO: Implement size-based rotation and cleanup (retain).
-            tracing::warn!("Log rotation '{}' not fully supported; falling back to daily.", other);
+            tracing::warn!(
+                "Log rotation '{}' not fully supported; falling back to daily.",
+                other
+            );
             tracing_appender::rolling::daily(dir, file)
         }
     };
@@ -55,10 +58,8 @@ pub fn init_tracing_with_config(
     // Wait, if we don't init, the guard might be useless if the subscriber isn't using it.
     // But if it's already set, we can't change it.
     // We'll log a warning if we can't init.
-    
-    let registry = tracing_subscriber::registry()
-        .with(filter)
-        .with(file_layer);
+
+    let registry = tracing_subscriber::registry().with(filter).with(file_layer);
 
     let result = if cfg.format.as_str() == "json" {
         registry
@@ -82,7 +83,10 @@ pub fn init_tracing_with_config(
     };
 
     if let Err(e) = result {
-        eprintln!("Tracing init failed (global subscriber already set?): {}", e);
+        eprintln!(
+            "Tracing init failed (global subscriber already set?): {}",
+            e
+        );
     }
 
     Ok(guard)

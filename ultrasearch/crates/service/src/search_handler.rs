@@ -105,7 +105,8 @@ impl MetaIndexSearchHandler {
                         let t = Term::from_field_text(pf, value);
                         clauses.push((
                             Occur::Should,
-                            Box::new(TermQuery::new(t, IndexRecordOption::WithFreqs)) as Box<dyn Query>,
+                            Box::new(TermQuery::new(t, IndexRecordOption::WithFreqs))
+                                as Box<dyn Query>,
                         ));
                     }
                     _ => {
@@ -160,8 +161,8 @@ impl SearchHandler for MetaIndexSearchHandler {
         let docs_iter = hits.into_iter().skip(offset);
         let mut out = Vec::new();
         for (score, addr) in docs_iter {
-            if let Ok(retrieved) = searcher.doc::<TantivyDocument>(addr) 
-                && let Some(hit) = to_hit(&retrieved, &self.meta.fields, score) 
+            if let Ok(retrieved) = searcher.doc::<TantivyDocument>(addr)
+                && let Some(hit) = to_hit(&retrieved, &self.meta.fields, score)
             {
                 out.push(hit);
             }

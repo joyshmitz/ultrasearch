@@ -47,7 +47,7 @@ pub fn run_app(cfg: &AppConfig, mut shutdown_rx: mpsc::Receiver<()>) -> Result<(
         ..SchedulerConfig::default()
     };
     let sample_every = Duration::from_secs(cfg.metrics.sample_interval_secs.max(1));
-    
+
     // We'll use a dedicated thread for the scheduler loop for now,
     // but in a real service, we might want to use the tokio runtime.
     // For now, we just spawn it.
@@ -73,9 +73,9 @@ pub fn run_app(cfg: &AppConfig, mut shutdown_rx: mpsc::Receiver<()>) -> Result<(
     // But `run_app` is called from `main` (sync) or `service_main` (sync).
     // However, `shutdown_rx` is async. We need a runtime if we want to await, or use blocking_recv.
     // Since the channel is mpsc, we can use `blocking_recv`.
-    
+
     let _ = shutdown_rx.blocking_recv();
-    
+
     tracing::info!("Shutdown signal received. Exiting.");
     Ok(())
 }
