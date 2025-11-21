@@ -14,8 +14,6 @@ tracing-appender = "0.2"
 tokio = { workspace = true }
 dotenvy = { workspace = true }
 once_cell = { workspace = true }
-windows = { workspace = true }
-windows-service = { version = "0.6" }
 core-types = { path = "../core-types" }
 ipc = { path = "../ipc" }
 scheduler = { path = "../scheduler" }
@@ -23,3 +21,7 @@ meta-index = { path = "../meta-index" }
 content-index = { path = "../content-index" }
 ntfs-watcher = { path = "../ntfs-watcher" }
 prometheus = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+windows-service = { version = "0.6" }

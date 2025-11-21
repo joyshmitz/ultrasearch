@@ -11,5 +11,3 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 ipc = { path = "../ipc" }
 core-types = { path = "../core-types" }
-gpui = { workspace = true }
-gpui-component = { workspace = true }
