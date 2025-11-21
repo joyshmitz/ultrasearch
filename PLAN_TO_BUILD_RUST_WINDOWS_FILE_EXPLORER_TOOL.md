@@ -1,9 +1,12 @@
 At a high level you’re building:
 
 **Progress log**
-- 2025-11-20 (PinkPond): Started bead ultrasearch-c00.1.1 – pin toolchain/config; added rust-toolchain.toml and .cargo/config.toml per best-practices. No code changes yet.
-- 2025-11-20 to 2025-11-21 (LilacCat): c00.3 scaffolding in ntfs-watcher/meta-index (types, schema, helpers, tests); c00.5 scaffolding in content-extractor (extractor stack, limits, tests); config doc additions for extraction/scheduler; core-types config defaults/tests; misc small tests. Workspace fix still pending manifest window.
-- 2025-11-21 (LilacCat): Nightly + wildcard policy noted; plan to run c00.1.2 as soon as manifests free to fix workspace members, remove optional hnsw_rs from workspace deps, and align editions/toolchain to the new mandate.
+No manual plan notes (auto-generated)
+- 2025-11-21 (PurpleStone): Fixed workspace build on nightly: removed windows-sys workspace usage, added thiserror/tempfile deps, updated Tantivy integration for 0.25, simplified scheduler disk sampling for sysinfo 0.30, cleaned clippy/cargo fmt across crates; cargo clippy --all-targets now passes.
+  - Pending: need post-reservation window to try reverting `windows` pin back to wildcard and resolve windows-future break to fully align with latest-crate policy.
+  - Blocker (2025-11-21): latest resolve pulls `usn-journal-rs 0.4.0` → `windows 0.61.x` → `windows-future 0.2.1`, which fails (missing IMarshal/marshaler). Requires manifest/patch window to: (a) pin windows-core/windows-future combo or (b) pin usn-journal-rs to a compatible release. Awaiting Cargo.toml reservation to adjust.
+- 2025-11-21 (RedSnow): Unblocked cargo check on Linux by (1) adding serde support to core-types FileFlags, (2) removing unused `windows-sys` dep from ntfs-watcher, (3) temporarily pinning workspace `windows` crate to 0.52 to avoid the new `windows-future` breakage, and (4) fixing cli stub handler. `cargo check --all-targets` now passes (warnings only); waiting to coordinate manifests/windows version with PurpleStone’s c00.1.x pass.
+- 2025-11-21 (RedSnow): Started bead ultrasearch-c00.4.2; extended `SystemLoadSampler` with tracked CPU/mem plus disk bytes/sec field (currently stubbed to 0 on this host because sysinfo disks API unavailable under current features). Added basic test; build remains green.
 - 2025-11-21 (PinkSnow): Updated policy docs to nightly + latest crates; assigned epics across agents; working c00.1.2 (workspace manifests/windows-sys/usn-journal-rs) under nightly; reached out via Agent Mail.
 
 * an **NTFS + USN–driven catalog** for filenames and metadata (Everything‑style),
