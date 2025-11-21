@@ -11,6 +11,7 @@ use std::path::Path;
 use tracing::instrument;
 
 pub mod component_manager;
+pub mod ocr;
 pub mod plugins;
 
 /// Unified extraction output.
@@ -199,7 +200,7 @@ pub fn enforce_limits_str(text: &str, ctx: &ExtractContext) -> (String, bool, us
     (out, truncated, bytes)
 }
 
-fn resolve_ext(ctx: &ExtractContext) -> Option<String> {
+pub(crate) fn resolve_ext(ctx: &ExtractContext) -> Option<String> {
     if let Some(ext) = ctx.ext_hint.filter(|e| !e.is_empty()) {
         return Some(ext.to_ascii_lowercase());
     }
