@@ -25,6 +25,21 @@ pub enum BackendMode {
     ContentOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortColumn {
+    Name,
+    Path,
+    Size,
+    Modified,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortDirection {
+    #[default]
+    Asc,
+    Desc,
+}
+
 #[derive(Debug, Default)]
 pub struct SearchStatus {
     pub last_latency_ms: Option<u64>,
@@ -41,6 +56,9 @@ pub struct SearchAppModel {
     pub results: Vec<ResultRow>,
     pub selected_index: Option<usize>,
     pub client: Arc<IpcClient>,
+    pub sort_col: SortColumn,
+    pub sort_dir: SortDirection,
+    search_task: Option<Task<()>>,
 }
 
 impl SearchAppModel {
@@ -51,25 +69,85 @@ impl SearchAppModel {
             results: Vec::with_capacity(DEFAULT_MAX_ROWS),
             selected_index: None,
             client: Arc::new(IpcClient::new()),
+            sort_col: SortColumn::Name,
+            sort_dir: SortDirection::Asc,
+            search_task: None,
         })
     }
 
     pub fn set_query(&mut self, text: String, cx: &mut ModelContext<Self>) {
         self.query = text;
         cx.notify();
+        
+        // Debounce
+        let task = cx.spawn(|this, mut cx| async move {
+            let _ = cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
+            this.update(&mut cx, |model, cx| {
+                model.perform_search(cx);
+            }).ok();
+        });
+        self.search_task = Some(task);
+    }
+
+    pub fn set_backend_mode(&mut self, mode: BackendMode, cx: &mut ModelContext<Self>) {
+        self.status.backend_mode = mode;
+        cx.notify();
         self.perform_search(cx);
     }
 
-    pub fn perform_search(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
+    pub fn set_sort(&mut self, col: SortColumn, cx: &mut ModelContext<Self>) {
+        if self.sort_col == col {
+            self.sort_dir = match self.sort_dir {
+                SortDirection::Asc => SortDirection::Desc,
+                SortDirection::Desc => SortDirection::Asc,
+            };
+        } else {
+            self.sort_col = col;
+            self.sort_dir = SortDirection::Asc;
+        }
+        self.sort_results(cx);
+    }
+
+    pub fn sort_results(&mut self, cx: &mut ModelContext<Self>) {
+        let dir = self.sort_dir;
+        match self.sort_col {
+            SortColumn::Name => self.results.sort_by(|a, b| {
+                if dir == SortDirection::Asc { a.name.cmp(&b.name) } else { b.name.cmp(&a.name) }
+            }),
+            SortColumn::Path => self.results.sort_by(|a, b| {
+                if dir == SortDirection::Asc { a.path.cmp(&b.path) } else { b.path.cmp(&a.path) }
+            }),
+            SortColumn::Size => self.results.sort_by(|a, b| {
+                if dir == SortDirection::Asc { a.size.cmp(&b.size) } else { b.size.cmp(&a.size) }
+            }),
+            SortColumn::Modified => self.results.sort_by(|a, b| {
+                if dir == SortDirection::Asc { a.modified_ts.cmp(&b.modified_ts) } else { b.modified_ts.cmp(&a.modified_ts) }
+            }),
+        }
+        cx.notify();
+    }
+
+    pub fn perform_search(&mut self, cx: &mut ModelContext<Self>) {
+        // Cancel previous task by dropping it (overwriting)
+        // However, set_query already set a task (the timer).
+        // We want the actual search logic to be the *new* task.
+        // But set_query calls this *after* timer. 
+        // If set_query is called again before timer fires, the old task is dropped, timer cancelled.
+        // So the debounce logic in set_query covers the "wait before search".
+        // But if we are *searching* (network), we also want to cancel that if a new query comes.
+        // So set_query handles the debounce cancellation.
+        // perform_search should set the *network* task.
+        
         if self.query.is_empty() {
             self.update_results(vec![], 0, 0, cx);
-            return None;
+            self.search_task = None;
+            return;
         }
 
         let client = self.client.clone();
         let query_text = self.query.clone();
         
-        Some(cx.spawn(move |model, mut cx| async move {
+        let task = cx.spawn(move |model, mut cx| async move {
             // TODO: Parse query text into real AST (c00.7.3)
             // For now, just treat as prefix term on name
             let query = QueryExpr::Term(TermExpr {
@@ -108,7 +186,8 @@ impl SearchAppModel {
                     }).ok();
                 }
             }
-        }))
+        });
+        self.search_task = Some(task);
     }
 
     pub fn update_results(
@@ -124,6 +203,8 @@ impl SearchAppModel {
         self.status.total = total;
         self.status.truncated = truncated;
         self.results = rows;
+        // Re-apply sort
+        self.sort_results(cx);
         // Reset selection if invalid
         if let Some(idx) = self.selected_index {
             if idx >= self.results.len() {
