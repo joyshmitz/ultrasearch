@@ -16,10 +16,19 @@ pub trait StatusProvider: Send + Sync {
 }
 
 static PROVIDER: OnceLock<Arc<dyn StatusProvider>> = OnceLock::new();
+static BASIC_PROVIDER: OnceLock<Arc<BasicStatusProvider>> = OnceLock::new();
 
 /// Install a process-wide status provider.
 pub fn set_status_provider(provider: Arc<dyn StatusProvider>) {
     let _ = PROVIDER.set(provider);
+}
+
+/// Initialize and register a BasicStatusProvider; returns the handle for direct updates.
+pub fn init_basic_status_provider() -> Arc<BasicStatusProvider> {
+    let basic = Arc::new(BasicStatusProvider::new());
+    let _ = BASIC_PROVIDER.set(basic.clone());
+    set_status_provider(basic.clone());
+    basic
 }
 
 /// Fetch the current snapshot from the registered provider (or a default stub).
@@ -30,9 +39,40 @@ pub fn status_snapshot() -> StatusSnapshot {
 
     StatusSnapshot {
         volumes: Vec::new(),
-        scheduler_state: "unknown".to_string(),
+        scheduler_state: "initializing".to_string(),
         metrics: global_metrics_snapshot(Some(0), Some(0)),
         last_index_commit_ts: None,
+    }
+}
+
+/// Update helpers routed to the BasicStatusProvider if registered.
+pub fn update_status_volumes(volumes: Vec<VolumeStatus>) {
+    if let Some(p) = BASIC_PROVIDER.get() {
+        p.update_volumes(volumes);
+    }
+}
+
+pub fn update_status_scheduler_state(state: impl Into<String>) {
+    if let Some(p) = BASIC_PROVIDER.get() {
+        p.update_scheduler_state(state);
+    }
+}
+
+pub fn update_status_metrics(metrics: Option<MetricsSnapshot>) {
+    if let Some(p) = BASIC_PROVIDER.get() {
+        p.update_metrics(metrics);
+    }
+}
+
+pub fn update_status_queue_state(queue_depth: Option<u64>, active_workers: Option<u32>) {
+    if let Some(p) = BASIC_PROVIDER.get() {
+        p.update_queue_state(queue_depth, active_workers);
+    }
+}
+
+pub fn update_status_last_commit(ts: Option<i64>) {
+    if let Some(p) = BASIC_PROVIDER.get() {
+        p.update_last_index_commit(ts);
     }
 }
 
@@ -102,7 +142,7 @@ impl StatusProvider for BasicStatusProvider {
             .map(|s| s.clone())
             .unwrap_or_else(|_| StatusSnapshot {
                 volumes: Vec::new(),
-                scheduler_state: "unknown".into(),
+                scheduler_state: "initializing".into(),
                 metrics: global_metrics_snapshot(Some(0), Some(0)),
                 last_index_commit_ts: None,
             })
