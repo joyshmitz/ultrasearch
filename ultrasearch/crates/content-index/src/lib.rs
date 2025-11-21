@@ -142,6 +142,17 @@ pub fn to_document(doc: &ContentDoc, fields: &ContentFields) -> TantivyDocument 
     d
 }
 
+/// Add a single content document to the index writer.
+pub fn add_content_doc(
+    writer: &mut IndexWriter,
+    fields: &ContentFields,
+    doc: &ContentDoc,
+) -> Result<()> {
+    let tdoc = to_document(doc, fields);
+    writer.add_document(tdoc)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,4 +204,26 @@ mod tests {
         let reader = open_reader(&idx).unwrap();
         assert_eq!(reader.searcher().num_docs(), 0);
     }
+}
+
+#[test]
+fn add_content_doc_appends() {
+    let idx = create_in_ram().expect("in ram");
+    let mut writer = create_writer(&idx, &WriterConfig::default()).unwrap();
+    let doc = ContentDoc {
+        key: DocKey::from_parts(1, 2),
+        volume: 1,
+        name: Some("foo.txt".into()),
+        path: Some(r"C:\foo.txt".into()),
+        ext: Some("txt".into()),
+        size: 10,
+        modified: 123,
+        content_lang: Some("en".into()),
+        content: "hello world".into(),
+    };
+    add_content_doc(&mut writer, &idx.fields, &doc).unwrap();
+    writer.commit().unwrap();
+    let reader = open_reader(&idx).unwrap();
+    let searcher = reader.searcher();
+    assert_eq!(searcher.num_docs(), 1);
 }
