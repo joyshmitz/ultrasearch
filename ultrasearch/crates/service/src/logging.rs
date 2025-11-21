@@ -10,7 +10,7 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 /// Initialize tracing/logging for the service process using the provided config.
 ///
 /// - Honors `logging.level` from config, falling back to `RUST_LOG` then `info`.
-/// - Writes JSON logs to the configured rolling file (daily) and also to stdout.
+/// - Writes JSON logs to the configured rolling file (daily) and stdout (json or text per cfg).
 pub fn init_tracing_with_config(
     cfg: &LoggingSection,
 ) -> Result<tracing_appender::non_blocking::WorkerGuard> {
@@ -32,23 +32,38 @@ pub fn init_tracing_with_config(
     let file_appender = tracing_appender::rolling::daily(dir, file);
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
-    // File layer (plain text for now; enable JSON when tracing-subscriber json feature is on).
+    // File layer always JSON.
     let file_layer = fmt::layer()
-        .with_writer(non_blocking.clone())
+        .json()
+        .with_writer(non_blocking)
         .with_target(true)
         .with_thread_ids(true)
         .with_line_number(true);
 
-    let stdout_layer = fmt::layer()
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_line_number(true);
-
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(file_layer)
-        .with(stdout_layer)
-        .try_init()?;
+    if cfg.format.as_str() == "json" {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(file_layer)
+            .with(
+                fmt::layer()
+                    .json()
+                    .with_target(true)
+                    .with_thread_ids(true)
+                    .with_line_number(true),
+            )
+            .try_init()?;
+    } else {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(file_layer)
+            .with(
+                fmt::layer()
+                    .with_target(true)
+                    .with_thread_ids(true)
+                    .with_line_number(true),
+            )
+            .try_init()?;
+    }
 
     Ok(guard)
 }
