@@ -1,9 +1,18 @@
 At a high level you’re building:
 
 **Progress log**
-- 2025-11-21 (LilacCat): c00.1.2 manifests aligned to nightly policy — workspace edition 2024, `windows` dep wildcard, workspace `hnsw_rs` removed (scoped only to semantic-index); lockfile removed; cargo fmt/check/clippy pass on nightly. 
+- 2025-11-21 (PurplePond): c00.5.2 worker shim — index-worker now loads .env, builds extractor stack with `--enable-extractous`/env toggle, and runs single-file extraction with size/char limits; wiring only, keeps worker placeholder.
+- 2025-11-21 (PurplePond): c00.4.1 module wiring fixed — added idle/mod.rs + metrics/mod.rs, moved SystemLoad/SystemLoadSampler into metrics, reconciled idle tracker export; workspace check/clippy green.
+- 2025-11-21 (PurplePond): c00.5.2 Extractous backend gated behind `extractous_backend` feature; default stack stays SimpleText+Noop; builders gain `with_extractous_enabled()` toggle; added size guard test; feature default now off to keep worker lean.
+- 2025-11-21 (LilacCat): c00.1.2 manifests aligned to nightly policy — workspace edition 2024, `windows` dep wildcard, workspace `hnsw_rs` removed (scoped only to semantic-index); lockfile removed; cargo fmt/check/clippy pass on nightly.
+- 2025-11-21 (WhiteDog): c00.4.1 tidy — IdleTracker Windows impl now uses GetLastInputInfo + GetTickCount64; scheduler tests updated to include disk_bytes_per_sec/sample_duration fields.
 - 2025-11-21 (WhiteDog): c00.6.3/4 — IPC client (Windows) adds timeout+retry+backoff and CLI exposes `--timeout-ms/--retries/--backoff-ms`; fmt/check clean on nightly.
 - 2025-11-21 (PinkSnow): c00.6.2 — pipe dispatcher returns timed empty SearchResponse with `served_by` host label; status still stubbed; cargo check/clippy clean.
+- 2025-11-21 (WhiteStone): broadcasted nightly + latest-crate policy, reassigned IPC/scheduler/core/NTFS beads to owners, and started c00.8.3 (metrics emission).
+- 2025-11-21 (BlueHill): c00.2.1 core types reorganized into `ids`/`types` modules (DocKey/FileMeta/Volume* re-exported); IPC `SearchRequest` builder helpers added; c00.5.2 prep — `extractous_backend` feature normalized and Extractous stub wired with size checks; fmt/check/clippy clean.
+- 2025-11-21 (BlueHill): c00.3.1 volume discovery scaffold in `ntfs-watcher` — Windows-only implementation using GetLogicalDrives + GetVolumeInformationW + GetVolumeNameForVolumeMountPointW, filters to NTFS volumes, maps VolumeId→GUID + drive letters; non-Windows returns NotSupported; fmt/check/clippy clean.
+- 2025-11-21 (BlueHill): c00.3.2 MFT enumeration scaffold — `ntfs-watcher::enumerate_mft` uses usn-journal-rs (Windows) to iterate entries with path resolution and returns FileMeta; non-Windows returns NotSupported; fmt/check/clippy clean.
+- 2025-11-21 (RedSnow): Added meta-index regression test (`to_document_sets_fields`) to verify doc_key/volume/path/ext/size/timestamps/flags storage; meta-index tests pass; no manifest changes.
 
 * an **NTFS + USN–driven catalog** for filenames and metadata (Everything‑style),
 * a **Tantivy‑based full‑text engine** for contents,
@@ -586,6 +595,9 @@ Scheduler algorithm:
   * Check current state.
   * Pop jobs from allowed categories up to a per‑tick budget (e.g. N files or M MB).
   * When there’s a backlog of content jobs and DeepIdle persists for more than X seconds, spawn a worker with a batch (size tunable, e.g. 500–2000 files).
+  * Status 2025-11-21 (WhiteHill): scheduler crate now has configurable budgets/thresholds via `SchedulerConfig`, queue selectors, and `should_spawn_content_worker` cooldown/backlog helper. Idle/load samplers live in `scheduler::idle`/`metrics`; disk busy still a stub until a reliable IO source is picked.
+
+Status 2025-11-21 (WhiteHill): implemented `scheduler::idle` (IdleTracker with configurable warm/deep thresholds on GetLastInputInfo) and `scheduler::metrics` (SystemLoadSampler with CPU/mem + sample duration; disk busy hook retained, currently zeroed until a reliable IO source is chosen). Scheduler crate tests and `cargo check -p scheduler --all-targets` pass; wiring into service loop and real disk busy metric remain TODO.
 
 ### 7.4 Process and thread priorities
 
