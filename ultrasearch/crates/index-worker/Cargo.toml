@@ -9,6 +9,9 @@ description = "Batch indexing worker for UltraSearch"
 [dependencies]
 anyhow = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+dotenvy = { workspace = true }
 core-types = { path = "../core-types" }
 content-extractor = { path = "../content-extractor" }
 content-index = { path = "../content-index" }
