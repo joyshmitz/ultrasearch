@@ -8,8 +8,9 @@ use std::path::Path;
 use anyhow::Result;
 use core_types::DocKey;
 use tantivy::{
+    schema::document::TantivyDocument,
     schema::*,
-    Index, IndexWriter, ReloadPolicy,
+    Index, IndexSettings, IndexWriter, ReloadPolicy,
 };
 
 /// Field handles for the content index schema.
@@ -62,10 +63,11 @@ pub struct ContentIndex {
 
 pub fn open_or_create(path: &Path) -> Result<ContentIndex> {
     let (schema, fields) = build_schema();
+    let settings = IndexSettings::default();
     let index = if path.join("meta.json").exists() {
         Index::open_in_dir(path)?
     } else {
-        Index::create_in_dir(path, schema)?
+        Index::create_in_dir(path, schema, settings)?
     };
     Ok(ContentIndex { index, fields })
 }
@@ -74,7 +76,7 @@ pub fn open_or_create(path: &Path) -> Result<ContentIndex> {
 pub fn create_in_ram() -> Result<ContentIndex> {
     let (schema, fields) = build_schema();
     let dir = tantivy::directory::RamDirectory::create();
-    let index = Index::create(dir, schema)?;
+    let index = Index::create(dir, schema, IndexSettings::default())?;
     Ok(ContentIndex { index, fields })
 }
 
@@ -104,7 +106,7 @@ pub fn open_reader(idx: &ContentIndex) -> Result<tantivy::IndexReader> {
     let reader = idx
         .index
         .reader_builder()
-        .reload_policy(ReloadPolicy::OnCommit)
+        .reload_policy(ReloadPolicy::OnCommitWithDelay)
         .try_into()?;
     Ok(reader)
 }
@@ -122,8 +124,8 @@ pub struct ContentDoc {
     pub content: String,
 }
 
-pub fn to_document(doc: &ContentDoc, fields: &ContentFields) -> tantivy::Document {
-    let mut d = tantivy::Document::new();
+pub fn to_document(doc: &ContentDoc, fields: &ContentFields) -> TantivyDocument {
+    let mut d = TantivyDocument::default();
     d.add_u64(fields.doc_key, doc.key.0);
     d.add_u64(fields.volume, doc.volume as u64);
     if let Some(name) = &doc.name {
