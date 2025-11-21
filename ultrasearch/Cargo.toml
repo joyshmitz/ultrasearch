@@ -1,4 +1,4 @@
 [workspace]
-# Workspace is defined at repository root (../Cargo.toml).
-# This file is intentionally minimal to avoid nested workspaces.
+# Workspace is defined at repository root (../Cargo.toml). This file exists to
+# avoid nested workspace confusion; do not add members here.
 members = []
