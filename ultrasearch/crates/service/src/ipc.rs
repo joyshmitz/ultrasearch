@@ -1,13 +1,19 @@
 #![cfg(target_os = "windows")]
 
+use std::env;
+use std::time::Instant;
+
 use anyhow::Result;
-use ipc::{framing, MetricsSnapshot, SearchRequest, SearchResponse, StatusRequest, StatusResponse, VolumeStatus};
+use ipc::{
+    framing, MetricsSnapshot, SearchRequest, SearchResponse, StatusRequest, StatusResponse,
+    VolumeStatus,
+};
+use service::metrics::{global_metrics_snapshot, record_ipc_request};
 use service::status::make_status_response;
+use service::status_provider::status_snapshot;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::task::JoinHandle;
-use std::time::Instant;
-use std::env;
 use uuid::Uuid;
 
 const DEFAULT_PIPE_NAME: &str = r#"\\.\pipe\ultrasearch"#;
@@ -72,37 +78,46 @@ async fn handle_connection(conn: &mut NamedPipeServer) -> Result<()> {
 fn dispatch(payload: &[u8]) -> Vec<u8> {
     // Try StatusRequest first.
     if let Ok(req) = bincode::deserialize::<StatusRequest>(payload) {
-        let empty_metrics = service::metrics::global_metrics_snapshot(Some(0), Some(0)).or_else(|| {
-            Some(MetricsSnapshot {
-                search_latency_ms_p50: None,
-                search_latency_ms_p95: None,
-                worker_cpu_pct: None,
-                worker_mem_bytes: None,
-                queue_depth: Some(0),
-                active_workers: Some(0),
+        let started = Instant::now();
+        let snap = status_snapshot();
+        let empty_metrics = snap.metrics.or_else(|| {
+            global_metrics_snapshot(Some(0), Some(0)).or_else(|| {
+                Some(MetricsSnapshot {
+                    search_latency_ms_p50: None,
+                    search_latency_ms_p95: None,
+                    worker_cpu_pct: None,
+                    worker_mem_bytes: None,
+                    queue_depth: Some(0),
+                    active_workers: Some(0),
+                })
             })
         });
         let resp = make_status_response(
             req.id,
-            Vec::new(),              // TODO: wire real volume data
-            "unknown".to_string(),   // TODO: pull scheduler state
+            snap.volumes,
+            snap.scheduler_state,
             empty_metrics,
-            None,
+            snap.last_index_commit_ts,
         );
-        return bincode::serialize(&resp).unwrap_or_default();
+        let encoded = bincode::serialize(&resp).unwrap_or_default();
+        record_ipc_request(started.elapsed());
+        return encoded;
     }
     // Fallback: return a well-formed empty SearchResponse for now.
     if let Ok(req) = bincode::deserialize::<SearchRequest>(payload) {
         let start = Instant::now();
+        let elapsed = start.elapsed();
         let resp = SearchResponse {
             id: req.id,
             hits: Vec::new(),
             total: 0,
             truncated: false,
-            took_ms: start.elapsed().as_millis().min(u32::MAX as u128) as u32,
+            took_ms: elapsed.as_millis().min(u32::MAX as u128) as u32,
             served_by: Some(host_label()),
         };
-        return bincode::serialize(&resp).unwrap_or_default();
+        let encoded = bincode::serialize(&resp).unwrap_or_default();
+        record_ipc_request(elapsed);
+        return encoded;
     }
     // If payload decodes as a UUID prefix, echo it back.
     if payload.len() >= 16 {

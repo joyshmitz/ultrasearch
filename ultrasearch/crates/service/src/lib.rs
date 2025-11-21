@@ -4,6 +4,7 @@ mod logging;
 pub mod metrics;
 pub mod priority;
 pub mod status;
+pub mod status_provider;
 
 pub use logging::init_tracing;
 pub use metrics::{
