@@ -26,7 +26,7 @@ pub struct SystemLoadSampler {
     disk_busy_threshold_bps: u64,
     last_sample: Instant,
     #[cfg(target_os = "windows")]
-    disk_counter: Option<PdhCounter>,
+    disk_counter: Option<Box<dyn DiskCounter>>,
 }
 
 impl SystemLoadSampler {
@@ -36,7 +36,9 @@ impl SystemLoadSampler {
         system.refresh_cpu_all();
         system.refresh_memory();
         #[cfg(target_os = "windows")]
-        let disk_counter = PdhCounter::new_total_disk_bytes().ok();
+        let disk_counter = PdhCounter::new_total_disk_bytes()
+            .ok()
+            .map(|c| Box::new(c) as Box<dyn DiskCounter>);
 
         Self {
             system,
@@ -45,6 +47,12 @@ impl SystemLoadSampler {
             #[cfg(target_os = "windows")]
             disk_counter,
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn with_disk_counter(mut self, disk_counter: Option<Box<dyn DiskCounter>>) -> Self {
+        self.disk_counter = disk_counter;
+        self
     }
 
     pub fn disk_threshold(&self) -> u64 {
@@ -104,10 +112,21 @@ impl SystemLoadSampler {
     }
 }
 
+pub trait DiskCounter: Send {
+    fn sample_bytes_per_sec(&mut self) -> windows::core::Result<u64>;
+}
+
 #[cfg(target_os = "windows")]
 struct PdhCounter {
     query: isize,
     counter: isize,
+}
+
+#[cfg(target_os = "windows")]
+impl DiskCounter for PdhCounter {
+    fn sample_bytes_per_sec(&mut self) -> windows::core::Result<u64> {
+        pdh_collect_and_sample(self.query, self.counter)
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -143,30 +162,6 @@ impl PdhCounter {
             Ok(Self { query, counter })
         }
     }
-
-    fn sample_bytes_per_sec(&mut self) -> windows::core::Result<u64> {
-        fn pdh_ok(status: u32, ctx: &str) -> windows::core::Result<()> {
-            if status == 0 {
-                Ok(())
-            } else {
-                Err(windows::core::Error::new(
-                    windows::core::HRESULT(status as i32),
-                    format!("{ctx} failed (status 0x{status:08x})").into(),
-                ))
-            }
-        }
-
-        unsafe {
-            pdh_ok(PdhCollectQueryData(self.query), "PdhCollectQueryData")?;
-            let mut value = PDH_FMT_COUNTERVALUE::default();
-            pdh_ok(
-                PdhGetFormattedCounterValue(self.counter, PDH_FMT_DOUBLE, None, &mut value),
-                "PdhGetFormattedCounterValue",
-            )?;
-            let v = value.Anonymous.doubleValue;
-            Ok(if v.is_sign_negative() { 0 } else { v as u64 })
-        }
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -178,9 +173,48 @@ impl Drop for PdhCounter {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn pdh_collect_and_sample(query: isize, counter: isize) -> windows::core::Result<u64> {
+    fn pdh_ok(status: u32, ctx: &str) -> windows::core::Result<()> {
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(windows::core::Error::new(
+                windows::core::HRESULT(status as i32),
+                format!("{ctx} failed (status 0x{status:08x})").into(),
+            ))
+        }
+    }
+
+    unsafe {
+        pdh_ok(PdhCollectQueryData(query), "PdhCollectQueryData")?;
+        let mut value = PDH_FMT_COUNTERVALUE::default();
+        pdh_ok(
+            PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, None, &mut value),
+            "PdhGetFormattedCounterValue",
+        )?;
+        let v = value.Anonymous.doubleValue;
+        Ok(if v.is_sign_negative() { 0 } else { v as u64 })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "windows")]
+    struct MockCounter {
+        vals: Vec<windows::core::Result<u64>>,
+        idx: usize,
+    }
+
+    #[cfg(target_os = "windows")]
+    impl DiskCounter for MockCounter {
+        fn sample_bytes_per_sec(&mut self) -> windows::core::Result<u64> {
+            let out = self.vals.get(self.idx).cloned().unwrap_or(Ok(0));
+            self.idx += 1;
+            out
+        }
+    }
 
     #[test]
     fn disk_busy_threshold_applied() {
@@ -189,5 +223,17 @@ mod tests {
         let computed_flag = load.disk_bytes_per_sec >= sampler.disk_threshold();
         assert_eq!(load.disk_busy, computed_flag);
         assert!(load.sample_duration.as_millis() > 0);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn disk_busy_mock_counter() {
+        let mock = MockCounter {
+            vals: vec![Ok(2_000)],
+            idx: 0,
+        };
+        let mut sampler = SystemLoadSampler::new(1_000).with_disk_counter(Some(Box::new(mock)));
+        let (_, busy) = sampler.sample_disk(Duration::from_secs(1));
+        assert!(busy);
     }
 }

@@ -40,8 +40,10 @@ mod e2e_windows_tests {
         client::PipeClient,
     };
     use anyhow::Result;
+    use content_index::{ContentDoc, WriterConfig, add_content_doc, create_writer, open_or_create};
     use core_types::{DocKey, FileFlags, FileMeta, Timestamp};
     use tempfile::tempdir;
+    use tokio::io::AsyncWriteExt;
     use tokio::sync::mpsc;
     use tokio::time::{Duration, sleep};
     use uuid::Uuid;
@@ -149,6 +151,218 @@ mod e2e_windows_tests {
         );
 
         // Shutdown
+        let _ = shutdown_tx.send(()).await;
+        let _ = handle.join().expect("service thread panicked")?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn e2e_content_search() -> Result<()> {
+        if std::env::var("ULTRASEARCH_E2E").as_deref() != Ok("1") {
+            eprintln!("skipping e2e_content_search: set ULTRASEARCH_E2E=1 to enable");
+            return Ok(());
+        }
+
+        let temp = tempdir()?;
+        let data_dir = temp.path().join("data");
+        std::fs::create_dir_all(&data_dir)?;
+        let index_root = data_dir.join("index");
+        let meta_index = index_root.join("meta");
+        let content_index = index_root.join("content");
+        let state_dir = data_dir.join("state");
+        let jobs_dir = data_dir.join("jobs");
+        let log_dir = data_dir.join("log");
+        for p in [&meta_index, &content_index, &state_dir, &jobs_dir, &log_dir] {
+            std::fs::create_dir_all(p)?;
+        }
+
+        // Seed content index with one doc.
+        let content_idx = open_or_create(&content_index)?;
+        let mut writer = create_writer(&content_idx, &WriterConfig::default())?;
+        let doc = ContentDoc {
+            key: DocKey::from_parts(1, 1),
+            volume: 1,
+            name: Some("hello.txt".into()),
+            path: Some(r"C:\temp\hello.txt".into()),
+            ext: Some("txt".into()),
+            size: 20,
+            modified: now_ts(),
+            content_lang: Some("en".into()),
+            content: "lorem ipsum ultrasearch content".into(),
+        };
+        add_content_doc(&mut writer, &content_idx.fields, &doc)?;
+        writer.commit()?;
+
+        // Seed meta index via bootstrap option.
+        let meta = FileMeta::new(
+            DocKey::from_parts(1, 1),
+            1,
+            None,
+            "hello.txt".into(),
+            Some(r"C:\temp\hello.txt".into()),
+            20,
+            now_ts(),
+            now_ts(),
+            FileFlags::empty(),
+        );
+
+        let mut cfg = core_types::config::AppConfig::default();
+        cfg.app.data_dir = data_dir.to_string_lossy().to_string();
+        cfg.logging.file = log_dir.join("searchd.log").to_string_lossy().to_string();
+        cfg.paths.meta_index = meta_index.to_string_lossy().to_string();
+        cfg.paths.content_index = content_index.to_string_lossy().to_string();
+        cfg.paths.state_dir = state_dir.to_string_lossy().to_string();
+        cfg.paths.jobs_dir = jobs_dir.to_string_lossy().to_string();
+        cfg.metrics.enabled = false;
+
+        let pipe_name = format!(r"\\.\pipe\ultrasearch-test-{}", Uuid::new_v4());
+        let opts = BootstrapOptions {
+            initial_metas: Some(vec![meta]),
+            skip_initial_ingest: true,
+            pipe_name: Some(pipe_name.clone()),
+        };
+
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let cfg_for_thread = cfg.clone();
+        let handle =
+            std::thread::spawn(move || run_app_with_options(&cfg_for_thread, shutdown_rx, opts));
+
+        let client =
+            PipeClient::new(pipe_name.clone()).with_request_timeout(Duration::from_millis(750));
+        let mut ready = false;
+        for _ in 0..10 {
+            let req: StatusRequest = StatusRequest { id: Uuid::new_v4() };
+            if client.status(req).await.is_ok() {
+                ready = true;
+                break;
+            }
+            sleep(Duration::from_millis(200)).await;
+        }
+        assert!(ready, "IPC server did not become ready in time (content)");
+
+        let search_req: SearchRequest = SearchRequest {
+            id: Uuid::new_v4(),
+            query: QueryExpr::Term(TermExpr {
+                field: None,
+                value: "lorem".into(),
+                modifier: TermModifier::Term,
+            }),
+            limit: 5,
+            mode: SearchMode::Content,
+            timeout: Some(Duration::from_secs(2)),
+            offset: 0,
+        };
+        let resp = client.search(search_req).await?;
+        assert!(
+            resp.total >= 1 && !resp.hits.is_empty(),
+            "content search should return seeded doc; total={} hits={}",
+            resp.total,
+            resp.hits.len()
+        );
+
+        let _ = shutdown_tx.send(()).await;
+        let _ = handle.join().expect("service thread panicked")?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn e2e_ipc_malformed_frame_resilience() -> Result<()> {
+        if std::env::var("ULTRASEARCH_E2E").as_deref() != Ok("1") {
+            eprintln!(
+                "skipping e2e_ipc_malformed_frame_resilience: set ULTRASEARCH_E2E=1 to enable"
+            );
+            return Ok(());
+        }
+
+        let temp = tempdir()?;
+        let data_dir = temp.path().join("data");
+        std::fs::create_dir_all(&data_dir)?;
+        let index_root = data_dir.join("index");
+        let meta_index = index_root.join("meta");
+        let content_index = index_root.join("content");
+        let state_dir = data_dir.join("state");
+        let jobs_dir = data_dir.join("jobs");
+        let log_dir = data_dir.join("log");
+        for p in [&meta_index, &content_index, &state_dir, &jobs_dir, &log_dir] {
+            std::fs::create_dir_all(p)?;
+        }
+
+        let meta = FileMeta::new(
+            DocKey::from_parts(1, 1),
+            1,
+            None,
+            "alive.txt".into(),
+            Some(r"C:\temp\alive.txt".into()),
+            5,
+            now_ts(),
+            now_ts(),
+            FileFlags::empty(),
+        );
+
+        let mut cfg = core_types::config::AppConfig::default();
+        cfg.app.data_dir = data_dir.to_string_lossy().to_string();
+        cfg.logging.file = log_dir.join("searchd.log").to_string_lossy().to_string();
+        cfg.paths.meta_index = meta_index.to_string_lossy().to_string();
+        cfg.paths.content_index = content_index.to_string_lossy().to_string();
+        cfg.paths.state_dir = state_dir.to_string_lossy().to_string();
+        cfg.paths.jobs_dir = jobs_dir.to_string_lossy().to_string();
+        cfg.metrics.enabled = false;
+
+        let pipe_name = format!(r"\\.\pipe\ultrasearch-test-{}", Uuid::new_v4());
+        let opts = BootstrapOptions {
+            initial_metas: Some(vec![meta]),
+            skip_initial_ingest: true,
+            pipe_name: Some(pipe_name.clone()),
+        };
+
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let cfg_for_thread = cfg.clone();
+        let handle =
+            std::thread::spawn(move || run_app_with_options(&cfg_for_thread, shutdown_rx, opts));
+
+        let client =
+            PipeClient::new(pipe_name.clone()).with_request_timeout(Duration::from_millis(500));
+        let mut ready = false;
+        for _ in 0..10 {
+            let req: StatusRequest = StatusRequest { id: Uuid::new_v4() };
+            if client.status(req).await.is_ok() {
+                ready = true;
+                break;
+            }
+            sleep(Duration::from_millis(150)).await;
+        }
+        assert!(
+            ready,
+            "IPC server did not become ready in time (malformed test)"
+        );
+
+        // Send malformed frame (length=0)
+        {
+            use tokio::net::windows::named_pipe::ClientOptions;
+            let mut conn = ClientOptions::new().open(&pipe_name)?;
+            conn.write_all(&0u32.to_le_bytes()).await?;
+            let _ = conn.shutdown().await;
+        }
+
+        // Server should still respond to a valid request on a fresh connection.
+        let search_req: SearchRequest = SearchRequest {
+            id: Uuid::new_v4(),
+            query: QueryExpr::Term(TermExpr {
+                field: None,
+                value: "alive".into(),
+                modifier: TermModifier::Term,
+            }),
+            limit: 5,
+            mode: SearchMode::NameOnly,
+            timeout: Some(Duration::from_secs(2)),
+            offset: 0,
+        };
+        let resp = client.search(search_req).await?;
+        assert!(
+            resp.total >= 1,
+            "expected service to remain alive after malformed frame"
+        );
+
         let _ = shutdown_tx.send(()).await;
         let _ = handle.join().expect("service thread panicked")?;
         Ok(())
