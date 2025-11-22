@@ -76,7 +76,7 @@ fn main() -> Result<()> {
     let mut service = ChildGuard::spawn("service", &mut service_cmd)?;
     println!("{}", style("service started, waiting for IPC...").dim());
 
-    wait_for_ipc_ready()?;
+    wait_for_ipc_ready(&mut service)?;
 
     let mut ui_cmd = Command::new(&ui_path);
     ui_cmd
@@ -99,6 +99,10 @@ fn current_exe_dir() -> Result<PathBuf> {
         .parent()
         .map(Path::to_path_buf)
         .context("executable has no parent dir")?;
+    // If running from target/{profile}, hop one level up so .env at repo root is found.
+    if let Some(parent) = dir.parent() {
+        return Ok(parent.to_path_buf());
+    }
     Ok(dir)
 }
 
@@ -119,7 +123,7 @@ fn resolve_binary(dir: &Path, stem: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn wait_for_ipc_ready() -> Result<()> {
+fn wait_for_ipc_ready(service: &mut ChildGuard) -> Result<()> {
     #[cfg(not(windows))]
     {
         return Ok(()); // IPC pipe only on Windows; nothing to probe elsewhere.
@@ -128,20 +132,30 @@ fn wait_for_ipc_ready() -> Result<()> {
     #[cfg(windows)]
     {
         let rt = Runtime::new().context("build tokio runtime")?;
-        let client = PipeClient::default().with_request_timeout(Duration::from_millis(400));
+        let client = PipeClient::default().with_request_timeout(Duration::from_millis(600));
         let mut attempts: u32 = 0;
         loop {
+            // bail quickly if service died
+            if let Some(status) = service
+                .child
+                .as_mut()
+                .and_then(|c| c.try_wait().ok())
+                .flatten()
+            {
+                anyhow::bail!("service exited early with status {:?}", status.code());
+            }
+
             let res = rt.block_on(client.status(StatusRequest { id: Uuid::new_v4() }));
             match res {
                 Ok(_) => {
                     println!("{}", style("IPC ready").green());
                     return Ok(());
                 }
-                Err(err) if attempts < 40 => {
+                Err(err) if attempts < 120 => {
                     attempts += 1;
                     print!(".");
                     let _ = std::io::stdout().flush();
-                    sleep(Duration::from_millis(250));
+                    sleep(Duration::from_millis(500));
                     continue;
                 }
                 Err(err) => {
