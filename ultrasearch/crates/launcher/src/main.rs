@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use console::style;
-use dotenvy::dotenv;
+use dotenvy::{dotenv, from_path};
 use ipc::{StatusRequest, client::PipeClient};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::{
     env,
     io::Write,
@@ -10,8 +12,6 @@ use std::{
     thread::sleep,
     time::Duration,
 };
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
 
@@ -57,8 +57,8 @@ impl Drop for ChildGuard {
 }
 
 fn main() -> Result<()> {
-    dotenv().ok();
     let exe_dir = current_exe_dir()?;
+    load_env(&exe_dir);
 
     let service_path = resolve_binary(&exe_dir, "service")?;
     let ui_path = resolve_binary(&exe_dir, "ui")?;
@@ -102,10 +102,6 @@ fn current_exe_dir() -> Result<PathBuf> {
         .parent()
         .map(Path::to_path_buf)
         .context("executable has no parent dir")?;
-    // If running from target/{profile}, hop one level up so .env at repo root is found.
-    if let Some(parent) = dir.parent() {
-        return Ok(parent.to_path_buf());
-    }
     Ok(dir)
 }
 
@@ -124,6 +120,16 @@ fn resolve_binary(dir: &Path, stem: &str) -> Result<PathBuf> {
         );
     }
     Ok(path)
+}
+
+fn load_env(exe_dir: &Path) {
+    // Try alongside the binary first, then parent (repo root when running from target/{profile}).
+    let _ = from_path(exe_dir.join(".env"));
+    if let Some(parent) = exe_dir.parent() {
+        let _ = from_path(parent.join(".env"));
+    } else {
+        dotenv().ok();
+    }
 }
 
 fn wait_for_ipc_ready(service: &mut ChildGuard) -> Result<()> {
