@@ -1,137 +1,297 @@
+use crate::model::state::{BackendMode, SearchAppModel};
 use gpui::prelude::*;
 use gpui::*;
-use crate::model::state::{SearchAppModel, BackendMode};
+
+const SEARCH_BG: Rgb = rgb(0x1a1a1a);
+const SEARCH_BORDER: Rgb = rgb(0x3e3e3e);
+const INPUT_BG: Rgb = rgb(0x2d2d2d);
+const INPUT_BG_FOCUS: Rgb = rgb(0x353535);
+const INPUT_BORDER_FOCUS: Rgb = rgb(0x007acc);
+const TEXT_PRIMARY: Rgb = rgb(0xe4e4e4);
+const TEXT_SECONDARY: Rgb = rgb(0x9d9d9d);
+const TEXT_PLACEHOLDER: Rgb = rgb(0x6a6a6a);
+const ACCENT_BLUE: Rgb = rgb(0x0078d4);
+const STATUS_SUCCESS: Rgb = rgb(0x48bb78);
+const STATUS_ERROR: Rgb = rgb(0xf56565);
 
 pub struct SearchView {
     model: Model<SearchAppModel>,
     focus_handle: FocusHandle,
+    input_text: SharedString,
 }
 
 impl SearchView {
-    pub fn new(model: Model<SearchAppModel>, cx: &mut Context<Self>) -> Self {
+    pub fn new(model: Model<SearchAppModel>, cx: &mut ViewContext<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        cx.on_focus(&focus_handle, |_, _cx| { /* focus gained */ }).detach();
-        
+
+        // Auto-focus on creation for instant search experience
+        cx.focus(&focus_handle);
+
+        // Observe model changes
         cx.observe(&model, |_, _, cx| cx.notify()).detach();
 
         Self {
             model,
             focus_handle,
+            input_text: "".into(),
         }
     }
 
-    fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let mut query = self.model.read(cx).query.clone();
-        let mut changed = false;
-
-        // Handle basic text input
-        // Note: This is very primitive. Real implementation should use a proper IME-aware input handler.
-        if let Some(char) = event.keystroke.key.chars().next() {
-            if !event.keystroke.modifiers.ctrl && !event.keystroke.modifiers.alt && !event.keystroke.modifiers.cmd {
-                 if char.is_alphanumeric() || char.is_ascii_punctuation() || char == ' ' {
-                     // Check if it's a single char string (gpui sends "a", "b", "space", "backspace")
-                     if event.keystroke.key.len() == 1 {
-                         query.push(char);
-                         changed = true;
-                     } else if event.keystroke.key == "space" {
-                         query.push(' ');
-                         changed = true;
-                     }
-                 }
-            }
-        }
-
-        if event.keystroke.key == "backspace" {
-            query.pop();
-            changed = true;
-        }
-
-        if changed {
-            self.model.update(cx, |model, cx| {
-                model.set_query(query, cx);
-            });
-        }
+    fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        self.input_text = text.into();
+        self.model.update(cx, |model, cx| {
+            model.set_query(text.to_string(), cx);
+        });
     }
 
-    fn set_mode(&mut self, mode: BackendMode, cx: &mut Context<Self>) {
+    fn clear_search(&mut self, cx: &mut ViewContext<Self>) {
+        self.input_text = "".into();
+        self.model.update(cx, |model, cx| {
+            model.set_query(String::new(), cx);
+        });
+    }
+
+    fn set_mode(&mut self, mode: BackendMode, cx: &mut ViewContext<Self>) {
         self.model.update(cx, |model, cx| {
             model.set_backend_mode(mode, cx);
         });
     }
+
+    fn format_number(n: u64) -> String {
+        if n >= 1_000_000 {
+            format!("{:.1}M", n as f64 / 1_000_000.0)
+        } else if n >= 1_000 {
+            format!("{:.1}K", n as f64 / 1_000.0)
+        } else {
+            n.to_string()
+        }
+    }
+
+    fn render_mode_button(
+        &self,
+        label: &'static str,
+        icon: &'static str,
+        mode: BackendMode,
+        current: BackendMode,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let is_active = mode == current;
+
+        div()
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .px_3()
+            .py_1p5()
+            .rounded_md()
+            .when(is_active, |this| {
+                this.bg(ACCENT_BLUE).text_color(white()).shadow_sm()
+            })
+            .when(!is_active, |this| {
+                this.bg(INPUT_BG)
+                    .text_color(TEXT_SECONDARY)
+                    .hover(|style| style.bg(INPUT_BG_FOCUS).text_color(TEXT_PRIMARY))
+            })
+            .cursor_pointer()
+            .transition_colors(Duration::from_millis(150))
+            .child(div().text_size(px(14.)).child(icon))
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(label),
+            )
+            .on_click(cx.listener(move |this, _, cx| this.set_mode(mode, cx)))
+    }
 }
 
 impl Render for SearchView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let model = self.model.read(cx);
-        let query = &model.query;
         let status = &model.status;
-        
-        let mode_btn = |label: &str, mode: BackendMode, current: BackendMode, cx: &mut Context<Self>| {
-            let active = mode == current;
-            div()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .bg(if active { rgb(0x4a4a4a) } else { rgb(0x2d2d2d) })
-                .text_color(if active { rgb(0xffffff) } else { rgb(0xaaaaaa) })
-                .cursor_pointer()
-                .child(label)
-                .on_click(cx.listener(move |this: &mut Self, _, cx| this.set_mode(mode, cx)))
-        };
+        let has_query = !model.query.is_empty();
 
         div()
             .flex()
             .flex_col()
             .w_full()
-            .bg(rgb(0x252526))
+            .bg(SEARCH_BG)
             .border_b_1()
-            .border_color(rgb(0x333333))
-            .p_2()
+            .border_color(SEARCH_BORDER)
+            .shadow_sm()
             .child(
-                // Input Row
+                // Search input area with modern styling
                 div()
                     .flex()
                     .items_center()
-                    .mb_2()
+                    .gap_3()
+                    .px_4()
+                    .py_3()
                     .child(
+                        // Search icon
                         div()
-                            .track_focus(&self.focus_handle)
-                            .on_key_down(cx.listener(Self::handle_key_down))
-                            .flex_1()
-                            .bg(rgb(0x3c3c3c))
-                            .rounded_md()
-                            .p_1()
-                            .text_color(rgb(0xffffff))
-                            .child(if query.is_empty() { "Type to search..." } else { query.as_str() })
+                            .text_size(px(20.))
+                            .text_color(TEXT_SECONDARY)
+                            .child("🔍"),
                     )
                     .child(
-                        div().ml_2().flex().gap_1()
-                            .child(mode_btn("Name", BackendMode::MetadataOnly, status.backend_mode, cx))
-                            .child(mode_btn("Mixed", BackendMode::Mixed, status.backend_mode, cx))
-                            .child(mode_btn("Content", BackendMode::ContentOnly, status.backend_mode, cx))
+                        // Text input with focus ring
+                        div()
+                            .id("search-input")
+                            .flex_1()
+                            .px_3()
+                            .py_2p5()
+                            .bg(INPUT_BG)
+                            .border_1()
+                            .border_color(SEARCH_BORDER)
+                            .rounded_lg()
+                            .text_color(TEXT_PRIMARY)
+                            .text_size(px(15.))
+                            .placeholder("Search files by name or content...", |style| {
+                                style.text_color(TEXT_PLACEHOLDER)
+                            })
+                            .when(cx.focused(&self.focus_handle), |this| {
+                                this.bg(INPUT_BG_FOCUS)
+                                    .border_color(INPUT_BORDER_FOCUS)
+                                    .shadow_md()
+                            })
+                            .transition_all(Duration::from_millis(150))
+                            .child(
+                                TextInput::new(cx)
+                                    .text(self.input_text.clone())
+                                    .on_input(cx.listener(Self::handle_input))
+                                    .placeholder("Search files by name or content...")
+                                    .font_size(px(15.)),
+                            ),
                     )
+                    .when(has_query, |this| {
+                        this.child(
+                            // Clear button (only shown when there's text)
+                            div()
+                                .px_2()
+                                .py_1p5()
+                                .rounded_md()
+                                .text_color(TEXT_SECONDARY)
+                                .hover(|style| style.bg(INPUT_BG_FOCUS).text_color(TEXT_PRIMARY))
+                                .cursor_pointer()
+                                .transition_colors(Duration::from_millis(150))
+                                .child("✕")
+                                .on_click(cx.listener(|this, _, cx| this.clear_search(cx))),
+                        )
+                    })
+                    .child(
+                        // Mode selector buttons
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(self.render_mode_button(
+                                "Name",
+                                "📄",
+                                BackendMode::MetadataOnly,
+                                status.backend_mode,
+                                cx,
+                            ))
+                            .child(self.render_mode_button(
+                                "Mixed",
+                                "⚡",
+                                BackendMode::Mixed,
+                                status.backend_mode,
+                                cx,
+                            ))
+                            .child(self.render_mode_button(
+                                "Content",
+                                "📝",
+                                BackendMode::ContentOnly,
+                                status.backend_mode,
+                                cx,
+                            )),
+                    ),
             )
             .child(
-                // Status Row
+                // Status bar with elegant information display
                 div()
                     .flex()
-                    .text_size(px(12.))
-                    .text_color(rgb(0xaaaaaa))
-                    .child(format!("{} results", status.total))
-                    .child(div().mx_2().child("|"))
-                    .child(format!("{} shown", status.shown))
-                    .child(div().mx_2().child("|"))
-                    .child(if let Some(lat) = status.last_latency_ms {
-                        format!("{} ms", lat)
-                    } else {
-                        "- ms".to_string()
-                    })
-                    .child(div().mx_2().child("|"))
+                    .items_center()
+                    .justify_between()
+                    .px_4()
+                    .py_2()
+                    .bg(rgb(0x242424))
                     .child(
                         div()
-                            .text_color(if status.connected { rgb(0x4caf50) } else { rgb(0xf44336) })
-                            .child(if status.connected { "Connected" } else { "Disconnected" })
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            .text_size(px(12.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .child(div().text_color(TEXT_SECONDARY).child(format!(
+                                        "{} results",
+                                        Self::format_number(status.total)
+                                    )))
+                                    .when(status.shown < status.total as usize, |this| {
+                                        this.child(
+                                            div()
+                                                .text_color(TEXT_PLACEHOLDER)
+                                                .child(format!("(showing {})", status.shown)),
+                                        )
+                                    }),
+                            )
+                            .when(status.last_latency_ms.is_some(), |this| {
+                                this.child(div().text_color(SEARCH_BORDER).child("•"))
+                                    .child(
+                                        div().text_color(TEXT_SECONDARY).child(format!(
+                                            "{} ms",
+                                            status.last_latency_ms.unwrap()
+                                        )),
+                                    )
+                            })
+                            .child(div().text_color(SEARCH_BORDER).child("•"))
+                            .child(
+                                div()
+                                    .text_color(TEXT_SECONDARY)
+                                    .child(&status.indexing_state),
+                            ),
                     )
+                    .child(
+                        // Connection status with animated indicator
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .w(px(8.))
+                                    .h(px(8.))
+                                    .rounded_full()
+                                    .bg(if status.connected {
+                                        STATUS_SUCCESS
+                                    } else {
+                                        STATUS_ERROR
+                                    })
+                                    .when(status.connected, |this| {
+                                        this.animate_pulse(Duration::from_secs(2))
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(if status.connected {
+                                        STATUS_SUCCESS
+                                    } else {
+                                        STATUS_ERROR
+                                    })
+                                    .child(if status.connected {
+                                        "Connected"
+                                    } else {
+                                        "Disconnected"
+                                    }),
+                            ),
+                    ),
             )
     }
 }

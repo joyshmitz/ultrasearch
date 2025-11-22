@@ -1,19 +1,30 @@
+use crate::model::state::SearchAppModel;
+use gpui::prelude::*;
 use gpui::*;
 use ipc::SearchHit;
-use crate::model::state::SearchAppModel;
+use std::process::Command;
+
+const ROW_HEIGHT: Pixels = px(48.);
+const TABLE_BG: Rgb = rgb(0x1e1e1e);
+const ROW_EVEN: Rgb = rgb(0x1e1e1e);
+const ROW_ODD: Rgb = rgb(0x242424);
+const ROW_HOVER: Rgb = rgb(0x2a2a2a);
+const ROW_SELECTED: Rgb = rgb(0x2d3a4e);
+const ROW_SELECTED_HOVER: Rgb = rgb(0x344661);
+const TEXT_PRIMARY: Rgb = rgb(0xe4e4e4);
+const TEXT_SECONDARY: Rgb = rgb(0x9d9d9d);
+const TEXT_DIM: Rgb = rgb(0x6a6a6a);
+const BORDER_COLOR: Rgb = rgb(0x333333);
 
 pub struct ResultsView {
     model: Model<SearchAppModel>,
     list_state: ListState,
+    hover_index: Option<usize>,
 }
 
 impl ResultsView {
     pub fn new(model: Model<SearchAppModel>, cx: &mut ViewContext<Self>) -> Self {
-        let list_state = ListState::new(
-            0,
-            ListAlignment::Top,
-            px(100.),
-        );
+        let list_state = ListState::new(0, ListAlignment::Top, ROW_HEIGHT);
 
         // Subscribe to model updates to refresh the list
         cx.observe(&model, |this: &mut Self, model, cx| {
@@ -26,51 +37,304 @@ impl ResultsView {
         Self {
             model,
             list_state,
+            hover_index: None,
         }
     }
 
-    fn render_row(ix: usize, hit: &SearchHit, _cx: &Window, _ctx: &Context<Self>) -> AnyElement {
+    fn handle_click(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+        self.model.update(cx, |model, cx| {
+            model.selected_index = Some(index);
+            cx.notify();
+        });
+    }
+
+    fn handle_double_click(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+        let model = self.model.read(cx);
+        if let Some(hit) = model.results.get(index) {
+            if let Some(path) = &hit.path {
+                self.open_file(path);
+            }
+        }
+    }
+
+    fn open_file(&self, path: &str) {
+        #[cfg(target_os = "windows")]
+        {
+            Command::new("explorer")
+                .arg("/select,")
+                .arg(path)
+                .spawn()
+                .ok();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Command::new("open").arg(path).spawn().ok();
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Command::new("xdg-open").arg(path).spawn().ok();
+        }
+    }
+
+    fn format_file_size(bytes: u64) -> String {
+        const KB: u64 = 1024;
+        const MB: u64 = KB * 1024;
+        const GB: u64 = MB * 1024;
+
+        if bytes >= GB {
+            format!("{:.2} GB", bytes as f64 / GB as f64)
+        } else if bytes >= MB {
+            format!("{:.1} MB", bytes as f64 / MB as f64)
+        } else if bytes >= KB {
+            format!("{:.1} KB", bytes as f64 / KB as f64)
+        } else {
+            format!("{} B", bytes)
+        }
+    }
+
+    fn format_modified_time(timestamp: i64) -> String {
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now();
+        let file_time = UNIX_EPOCH + Duration::from_secs(timestamp as u64);
+
+        if let Ok(duration) = now.duration_since(file_time) {
+            let days = duration.as_secs() / 86400;
+            if days == 0 {
+                "Today".to_string()
+            } else if days == 1 {
+                "Yesterday".to_string()
+            } else if days < 7 {
+                format!("{} days ago", days)
+            } else if days < 30 {
+                format!("{} weeks ago", days / 7)
+            } else if days < 365 {
+                format!("{} months ago", days / 30)
+            } else {
+                format!("{} years ago", days / 365)
+            }
+        } else {
+            "Future".to_string()
+        }
+    }
+
+    fn get_file_icon(ext: Option<&String>) -> &'static str {
+        match ext.map(|s| s.as_str()) {
+            Some("rs") | Some("toml") | Some("js") | Some("ts") | Some("tsx") | Some("jsx")
+            | Some("py") | Some("go") => "📝",
+            Some("pdf") => "📄",
+            Some("docx") | Some("doc") => "📘",
+            Some("xlsx") | Some("xls") => "📊",
+            Some("pptx") | Some("ppt") => "📙",
+            Some("zip") | Some("rar") | Some("7z") => "📦",
+            Some("jpg") | Some("jpeg") | Some("png") | Some("gif") | Some("svg") => "🖼️",
+            Some("mp4") | Some("avi") | Some("mkv") => "🎬",
+            Some("mp3") | Some("wav") | Some("flac") => "🎵",
+            Some("exe") | Some("dll") => "⚙️",
+            Some("md") | Some("txt") => "📃",
+            _ => "📄",
+        }
+    }
+
+    fn render_row_static(
+        index: usize,
+        hit: &SearchHit,
+        is_selected: bool,
+        is_hover: bool,
+    ) -> impl IntoElement {
+        let is_even = index % 2 == 0;
+
         let name = hit.name.as_deref().unwrap_or("<unknown>");
         let path = hit.path.as_deref().unwrap_or("");
-        let size = hit.size.unwrap_or(0).to_string(); 
+        let size_text = hit
+            .size
+            .map(Self::format_file_size)
+            .unwrap_or_else(|| "-".to_string());
+        let modified_text = hit
+            .modified
+            .map(Self::format_modified_time)
+            .unwrap_or_else(|| "-".to_string());
+        let icon = Self::get_file_icon(hit.ext.as_ref());
+        let score_pct = (hit.score * 100.0) as u32;
 
         div()
-            .flex()
             .w_full()
+            .h(ROW_HEIGHT)
+            .flex()
+            .items_center()
+            .px_4()
+            .gap_3()
+            .when(is_selected, |this| {
+                this.bg(if is_hover {
+                    ROW_SELECTED_HOVER
+                } else {
+                    ROW_SELECTED
+                })
+            })
+            .when(!is_selected, |this| {
+                this.bg(if is_hover {
+                    ROW_HOVER
+                } else if is_even {
+                    ROW_EVEN
+                } else {
+                    ROW_ODD
+                })
+            })
+            .border_b_1()
+            .border_color(BORDER_COLOR)
+            .cursor_pointer()
+            // TODO: Add mouse event handlers (requires non-static method)
+            // File icon
+            .child(div().text_size(px(20.)).child(icon))
+            // Name column (flexible)
             .child(
                 div()
-                    .flex_grow(4.)
-                    .child(name.to_string())
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(TEXT_PRIMARY)
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .child(name),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(TEXT_SECONDARY)
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .child(path),
+                    ),
+            )
+            // Score badge
+            .when(score_pct > 0, |this| {
+                this.child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(rgb(0x333333))
+                        .text_size(px(10.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(TEXT_DIM)
+                        .child(format!("{}%", score_pct)),
+                )
+            })
+            // Size column
+            .child(
+                div()
+                    .w(px(80.))
+                    .text_size(px(12.))
+                    .text_color(TEXT_SECONDARY)
+                    .text_align_right()
+                    .child(size_text),
+            )
+            // Modified column
+            .child(
+                div()
+                    .w(px(100.))
+                    .text_size(px(12.))
+                    .text_color(TEXT_SECONDARY)
+                    .text_align_right()
+                    .child(modified_text),
+            )
+    }
+
+    fn render_header(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+            .w_full()
+            .h(px(40.))
+            .flex()
+            .items_center()
+            .px_4()
+            .gap_3()
+            .bg(rgb(0x242424))
+            .border_b_1()
+            .border_color(BORDER_COLOR)
+            .text_size(px(11.))
+            .font_weight(FontWeight::BOLD)
+            .text_color(TEXT_DIM)
+            .text_transform_uppercase()
+            .letter_spacing(px(0.5))
+            .child(div().w(px(20.))) // Icon space
+            .child(div().flex_1().child("Name"))
+            .child(div().w(px(80.)).text_align_right().child("Size"))
+            .child(div().w(px(100.)).text_align_right().child("Modified"))
+    }
+
+    fn render_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let model = self.model.read(cx);
+        let has_query = !model.query.is_empty();
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .child(
+                div()
+                    .text_size(px(48.))
+                    .child(if has_query { "🔍" } else { "💾" }),
             )
             .child(
                 div()
-                    .flex_grow(6.)
-                    .child(path.to_string())
+                    .text_size(px(16.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(TEXT_SECONDARY)
+                    .child(if has_query {
+                        "No results found"
+                    } else {
+                        "Start typing to search"
+                    }),
             )
-            .child(
-                div()
-                    .flex_grow(2.)
-                    .child(size)
-            )
-            .into_any_element()
+            .when(has_query, |this| {
+                this.child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(TEXT_DIM)
+                        .child("Try different search terms or search mode"),
+                )
+            })
     }
 }
 
 impl Render for ResultsView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let model = self.model.clone();
+        let has_results = !model.read(cx).results.is_empty();
+        let hover_index = self.hover_index;
+
         div()
             .size_full()
-            .bg(rgb(0x1e1e1e))
-            .child(
-                list(self.list_state.clone(), move |ix, window, cx| {
-                    let model = model.read(cx);
-                    if let Some(hit) = model.results.get(ix) {
-                        Self::render_row(ix, hit, window, cx)
-                    } else {
-                        div().into_any_element()
-                    }
-                }).size_full()
-            )
+            .bg(TABLE_BG)
+            .flex()
+            .flex_col()
+            .when(has_results, |this| {
+                this.child(self.render_header(cx)).child(
+                    list(self.list_state.clone(), move |ix, _window, cx| {
+                        let model_read = model.read(cx);
+                        if let Some(hit) = model_read.results.get(ix) {
+                            let is_selected = model_read.is_selected(ix);
+                            let is_hover = hover_index == Some(ix);
+                            Self::render_row_static(ix, hit, is_selected, is_hover)
+                                .into_any_element()
+                        } else {
+                            div().into_any_element()
+                        }
+                    })
+                    .size_full()
+                    .track_scroll(self.list_state.clone()),
+                )
+            })
+            .when(!has_results, |this| this.child(self.render_empty_state(cx)))
     }
 }
