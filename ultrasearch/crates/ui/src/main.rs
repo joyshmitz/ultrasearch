@@ -10,32 +10,32 @@ use ui::views::preview_view::PreviewView;
 use ui::views::results_table::ResultsView;
 use ui::views::search_view::SearchView;
 
-const APP_BG: Hsla = hsla(0.0, 0.0, 0.102, 1.0);
-const DIVIDER_COLOR: Hsla = hsla(0.0, 0.0, 0.2, 1.0);
-const TEXT_PRIMARY: Hsla = hsla(0.0, 0.0, 0.894, 1.0);
+fn app_bg() -> Hsla {
+    hsla(0.0, 0.0, 0.102, 1.0)
+}
+fn divider_color() -> Hsla {
+    hsla(0.0, 0.0, 0.2, 1.0)
+}
+fn text_primary() -> Hsla {
+    hsla(0.0, 0.0, 0.894, 1.0)
+}
 
 /// Main application window containing all UI components
 struct UltraSearchWindow {
-    model: Model<SearchAppModel>,
-    search_view: View<SearchView>,
-    results_view: View<ResultsView>,
-    preview_view: View<PreviewView>,
+    model: Entity<SearchAppModel>,
+    search_view: Entity<SearchView>,
+    results_view: Entity<ResultsView>,
+    preview_view: Entity<PreviewView>,
     focus_handle: FocusHandle,
 }
 
 impl UltraSearchWindow {
-    fn new(cx: &mut WindowContext) -> Self {
-        // Create the shared model
-        let model = cx.new_model(|cx| {
-            let mut app_model = SearchAppModel::new(cx);
-            app_model.start_status_polling(cx);
-            app_model
-        });
+    fn new(cx: &mut Context<Self>) -> Self {
+        let model = cx.new(SearchAppModel::new);
 
-        // Create all views with the shared model
-        let search_view = cx.new_view(|cx| SearchView::new(model.clone(), cx));
-        let results_view = cx.new_view(|cx| ResultsView::new(model.clone(), cx));
-        let preview_view = cx.new_view(|cx| PreviewView::new(model.clone(), cx));
+        let search_view = cx.new(|cx| SearchView::new(model.clone(), cx));
+        let results_view = cx.new(|cx| ResultsView::new(model.clone(), cx));
+        let preview_view = cx.new(|cx| PreviewView::new(model.clone(), cx));
 
         let focus_handle = cx.focus_handle();
 
@@ -48,79 +48,107 @@ impl UltraSearchWindow {
         }
     }
 
-    fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut WindowContext) -> bool {
+    fn handle_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let modifiers = &event.keystroke.modifiers;
         let key = &event.keystroke.key;
 
-        // Global keyboard shortcuts
         match (
             key.as_str(),
-            modifiers.command || modifiers.ctrl,
+            modifiers.platform || modifiers.control,
             modifiers.shift,
         ) {
             // Ctrl/Cmd+K: Focus search
             ("k", true, false) => {
-                cx.focus_view(&self.search_view);
-                true
+                self.search_view.update(cx, |view, _cx| {
+                    window.focus(&view.focus_handle());
+                });
+                cx.stop_propagation();
             }
             // Escape: Clear search
             ("escape", false, false) => {
                 self.model.update(cx, |model, cx| {
                     model.set_query(String::new(), cx);
                 });
-                true
+                cx.stop_propagation();
             }
             // Up arrow: Previous result
-            ("up", false, false) if !cx.focused(&self.search_view.focus_handle(cx)) => {
+            ("up", false, false) => {
                 self.model.update(cx, |model, cx| model.select_previous(cx));
-                true
+                cx.stop_propagation();
             }
             // Down arrow: Next result
-            ("down", false, false) if !cx.focused(&self.search_view.focus_handle(cx)) => {
+            ("down", false, false) => {
                 self.model.update(cx, |model, cx| model.select_next(cx));
-                true
+                cx.stop_propagation();
+            }
+            // Enter: open selected file
+            ("enter", false, false) => {
+                if let Some(path) = self
+                    .model
+                    .read(cx)
+                    .selected_row()
+                    .and_then(|hit| hit.path.clone())
+                {
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = std::process::Command::new("explorer").arg(&path).spawn();
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = std::process::Command::new("open").arg(&path).spawn();
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                    }
+                }
+                cx.stop_propagation();
             }
             // Ctrl/Cmd+1: Name-only mode
             ("1", true, false) => {
                 self.model.update(cx, |model, cx| {
                     model.set_backend_mode(BackendMode::MetadataOnly, cx);
                 });
-                true
+                cx.stop_propagation();
             }
             // Ctrl/Cmd+2: Mixed mode
             ("2", true, false) => {
                 self.model.update(cx, |model, cx| {
                     model.set_backend_mode(BackendMode::Mixed, cx);
                 });
-                true
+                cx.stop_propagation();
             }
             // Ctrl/Cmd+3: Content mode
             ("3", true, false) => {
                 self.model.update(cx, |model, cx| {
                     model.set_backend_mode(BackendMode::ContentOnly, cx);
                 });
-                true
+                cx.stop_propagation();
             }
             // Ctrl/Cmd+Q: Quit application
             ("q", true, false) => {
                 cx.quit();
-                true
             }
-            _ => false,
+            _ => {}
         }
     }
 }
 
 impl Render for UltraSearchWindow {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
             .size_full()
             .flex()
             .flex_col()
-            .bg(APP_BG)
-            .text_color(TEXT_PRIMARY)
+            .bg(app_bg())
+            .text_color(text_primary())
             .child(
                 // Search header - fixed at top
                 div().flex_shrink_0().child(self.search_view.clone()),
@@ -138,7 +166,7 @@ impl Render for UltraSearchWindow {
                             .flex_grow()
                             .overflow_hidden()
                             .border_r_1()
-                            .border_color(DIVIDER_COLOR)
+                            .border_color(divider_color())
                             .child(self.results_view.clone()),
                     )
                     .child(
@@ -161,10 +189,7 @@ fn main() {
     }
 
     // Initialize GPUI application
-    App::new().run(|cx: &mut AppContext| {
-        // Register application metadata
-        cx.set_app_id("com.ultrasearch.desktop");
-
+    Application::new().run(|cx: &mut App| {
         // Open the main window
         cx.open_window(
             WindowOptions {
@@ -184,23 +209,22 @@ fn main() {
                     traffic_light_position: None,
                 }),
                 window_background: WindowBackgroundAppearance::Opaque,
-                focus: true,
-                show: true,
-                kind: WindowKind::Normal,
-                is_movable: true,
-                display_id: None,
+                app_id: Some("com.ultrasearch.desktop".to_string()),
+                ..WindowOptions::default()
             },
-            |cx| cx.new_view(UltraSearchWindow::new),
+            |_, cx| cx.new(UltraSearchWindow::new),
         )
         .expect("Failed to open window");
 
         // Print startup message
-        eprintln!("🔍 UltraSearch started successfully!");
-        eprintln!("💡 Keyboard shortcuts:");
+        eprintln!("✅ UltraSearch started successfully!");
+        eprintln!("🌀 Keyboard shortcuts:");
         eprintln!("   Ctrl+K        - Focus search");
         eprintln!("   Escape        - Clear search");
         eprintln!("   ↑/↓           - Navigate results");
         eprintln!("   Ctrl+1/2/3    - Switch search modes");
         eprintln!("   Ctrl+Q        - Quit");
+
+        cx.activate(true);
     });
 }

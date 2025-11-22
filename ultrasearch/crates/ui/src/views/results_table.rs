@@ -1,32 +1,47 @@
 use crate::model::state::SearchAppModel;
 use gpui::prelude::*;
-use gpui::*;
+use gpui::{InteractiveElement, *};
 use ipc::SearchHit;
 use std::process::Command;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const ROW_HEIGHT: Pixels = px(48.);
-const TABLE_BG: Hsla = hsla(0.0, 0.0, 0.118, 1.0);
-const ROW_EVEN: Hsla = hsla(0.0, 0.0, 0.118, 1.0);
-const ROW_ODD: Hsla = hsla(0.0, 0.0, 0.141, 1.0);
-const ROW_HOVER: Hsla = hsla(0.0, 0.0, 0.165, 1.0);
-const ROW_SELECTED: Hsla = hsla(210.0, 0.274, 0.243, 1.0);
-const ROW_SELECTED_HOVER: Hsla = hsla(210.0, 0.298, 0.294, 1.0);
-const TEXT_PRIMARY: Hsla = hsla(0.0, 0.0, 0.894, 1.0);
-const TEXT_SECONDARY: Hsla = hsla(0.0, 0.0, 0.616, 1.0);
-const TEXT_DIM: Hsla = hsla(0.0, 0.0, 0.416, 1.0);
-const BORDER_COLOR: Hsla = hsla(0.0, 0.0, 0.2, 1.0);
+fn row_height() -> Pixels {
+    px(48.)
+}
+fn table_bg() -> Hsla {
+    hsla(0.0, 0.0, 0.118, 1.0)
+}
+fn row_even() -> Hsla {
+    hsla(0.0, 0.0, 0.118, 1.0)
+}
+fn row_odd() -> Hsla {
+    hsla(0.0, 0.0, 0.141, 1.0)
+}
+fn row_selected() -> Hsla {
+    hsla(210.0, 0.274, 0.243, 1.0)
+}
+fn text_primary() -> Hsla {
+    hsla(0.0, 0.0, 0.894, 1.0)
+}
+fn text_secondary() -> Hsla {
+    hsla(0.0, 0.0, 0.616, 1.0)
+}
+fn text_dim() -> Hsla {
+    hsla(0.0, 0.0, 0.416, 1.0)
+}
+fn border_color() -> Hsla {
+    hsla(0.0, 0.0, 0.2, 1.0)
+}
 
 pub struct ResultsView {
-    model: Model<SearchAppModel>,
+    model: Entity<SearchAppModel>,
     list_state: ListState,
-    hover_index: Option<usize>,
 }
 
 impl ResultsView {
-    pub fn new(model: Model<SearchAppModel>, cx: &mut ViewContext<Self>) -> Self {
-        let list_state = ListState::new(0, ListAlignment::Top, ROW_HEIGHT);
+    pub fn new(model: Entity<SearchAppModel>, cx: &mut Context<ResultsView>) -> Self {
+        let list_state = ListState::new(0, ListAlignment::Top, row_height());
 
-        // Subscribe to model updates to refresh the list
         cx.observe(&model, |this: &mut Self, model, cx| {
             let count = model.read(cx).results.len();
             this.list_state.reset(count);
@@ -34,21 +49,18 @@ impl ResultsView {
         })
         .detach();
 
-        Self {
-            model,
-            list_state,
-            hover_index: None,
-        }
+        Self { model, list_state }
     }
 
-    fn handle_click(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+    fn handle_click(&mut self, index: usize, cx: &mut Context<Self>) {
         self.model.update(cx, |model, cx| {
             model.selected_index = Some(index);
             cx.notify();
         });
     }
 
-    fn handle_double_click(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+    #[allow(dead_code)]
+    fn handle_double_click(&mut self, index: usize, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
         if let Some(hit) = model.results.get(index) {
             if let Some(path) = &hit.path {
@@ -57,6 +69,7 @@ impl ResultsView {
         }
     }
 
+    #[allow(dead_code)]
     fn open_file(&self, path: &str) {
         #[cfg(target_os = "windows")]
         {
@@ -88,12 +101,11 @@ impl ResultsView {
         } else if bytes >= KB {
             format!("{:.1} KB", bytes as f64 / KB as f64)
         } else {
-            format!("{} B", bytes)
+            format!("{bytes} B")
         }
     }
 
     fn format_modified_time(timestamp: i64) -> String {
-        use std::time::{Duration, SystemTime, UNIX_EPOCH};
         let now = SystemTime::now();
         let file_time = UNIX_EPOCH + Duration::from_secs(timestamp as u64);
 
@@ -104,7 +116,7 @@ impl ResultsView {
             } else if days == 1 {
                 "Yesterday".to_string()
             } else if days < 7 {
-                format!("{} days ago", days)
+                format!("{days} days ago")
             } else if days < 30 {
                 format!("{} weeks ago", days / 7)
             } else if days < 365 {
@@ -120,31 +132,32 @@ impl ResultsView {
     fn get_file_icon(ext: Option<&String>) -> &'static str {
         match ext.map(|s| s.as_str()) {
             Some("rs") | Some("toml") | Some("js") | Some("ts") | Some("tsx") | Some("jsx")
-            | Some("py") | Some("go") => "📝",
+            | Some("py") | Some("go") => "🧑‍💻",
             Some("pdf") => "📄",
-            Some("docx") | Some("doc") => "📘",
+            Some("docx") | Some("doc") => "📝",
             Some("xlsx") | Some("xls") => "📊",
-            Some("pptx") | Some("ppt") => "📙",
-            Some("zip") | Some("rar") | Some("7z") => "📦",
-            Some("jpg") | Some("jpeg") | Some("png") | Some("gif") | Some("svg") => "🖼️",
-            Some("mp4") | Some("avi") | Some("mkv") => "🎬",
+            Some("pptx") | Some("ppt") => "📈",
+            Some("zip") | Some("rar") | Some("7z") => "🗜",
+            Some("jpg") | Some("jpeg") | Some("png") | Some("gif") | Some("svg") => "🖼",
+            Some("mp4") | Some("avi") | Some("mkv") => "🎞",
             Some("mp3") | Some("wav") | Some("flac") => "🎵",
-            Some("exe") | Some("dll") => "⚙️",
-            Some("md") | Some("txt") => "📃",
-            _ => "📄",
+            Some("exe") | Some("dll") => "⚙",
+            Some("md") | Some("txt") => "📄",
+            _ => "📁",
         }
     }
 
-    fn render_row_static(
+    fn render_row(
+        &self,
         index: usize,
         hit: &SearchHit,
         is_selected: bool,
-        is_hover: bool,
-    ) -> impl IntoElement {
-        let is_even = index % 2 == 0;
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let is_even = index.is_multiple_of(2);
 
-        let name = hit.name.as_deref().unwrap_or("<unknown>");
-        let path = hit.path.as_deref().unwrap_or("");
+        let name = hit.name.clone().unwrap_or_else(|| "<unknown>".to_string());
+        let path = hit.path.clone().unwrap_or_default();
         let size_text = hit
             .size
             .map(Self::format_file_size)
@@ -158,31 +171,24 @@ impl ResultsView {
 
         div()
             .w_full()
-            .h(ROW_HEIGHT)
+            .h(row_height())
             .flex()
             .items_center()
             .px_4()
             .gap_3()
-            .when(is_selected, |this| {
-                this.bg(if is_hover {
-                    ROW_SELECTED_HOVER
-                } else {
-                    ROW_SELECTED
-                })
-            })
+            .when(is_selected, |this| this.bg(row_selected()))
             .when(!is_selected, |this| {
-                this.bg(if is_hover {
-                    ROW_HOVER
-                } else if is_even {
-                    ROW_EVEN
-                } else {
-                    ROW_ODD
-                })
+                this.bg(if is_even { row_even() } else { row_odd() })
             })
             .border_b_1()
-            .border_color(BORDER_COLOR)
+            .border_color(border_color())
             .cursor_pointer()
-            // TODO: Add mouse event handlers (requires non-static method)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.handle_click(index, cx);
+                }),
+            )
             // File icon
             .child(div().text_size(px(20.)).child(icon))
             // Name column (flexible)
@@ -197,21 +203,21 @@ impl ResultsView {
                         div()
                             .text_size(px(14.))
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(TEXT_PRIMARY)
+                            .text_color(text_primary())
                             .overflow_hidden()
                             .child(name),
                     )
                     .child(
                         div()
                             .text_size(px(11.))
-                            .text_color(TEXT_SECONDARY)
+                            .text_color(text_secondary())
                             .overflow_hidden()
                             .child(path),
                     ),
             )
             // Score badge
-            .when(score_pct > 0, |this| {
-                this.child(
+            .when(score_pct > 0, |mut this: Div| {
+                this = this.child(
                     div()
                         .px_2()
                         .py_0p5()
@@ -219,16 +225,17 @@ impl ResultsView {
                         .bg(hsla(0.0, 0.0, 0.2, 1.0))
                         .text_size(px(10.))
                         .font_weight(FontWeight::BOLD)
-                        .text_color(TEXT_DIM)
-                        .child(format!("{}%", score_pct)),
-                )
+                        .text_color(text_dim())
+                        .child(format!("{score_pct}%")),
+                );
+                this
             })
             // Size column
             .child(
                 div()
                     .w(px(80.))
                     .text_size(px(12.))
-                    .text_color(TEXT_SECONDARY)
+                    .text_color(text_secondary())
                     .child(size_text),
             )
             // Modified column
@@ -236,12 +243,13 @@ impl ResultsView {
                 div()
                     .w(px(100.))
                     .text_size(px(12.))
-                    .text_color(TEXT_SECONDARY)
+                    .text_color(text_secondary())
                     .child(modified_text),
             )
+            .into_any_element()
     }
 
-    fn render_header(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_header(&self) -> impl IntoElement {
         div()
             .w_full()
             .h(px(40.))
@@ -251,17 +259,17 @@ impl ResultsView {
             .gap_3()
             .bg(hsla(0.0, 0.0, 0.141, 1.0))
             .border_b_1()
-            .border_color(BORDER_COLOR)
+            .border_color(border_color())
             .text_size(px(11.))
             .font_weight(FontWeight::BOLD)
-            .text_color(TEXT_DIM)
+            .text_color(text_dim())
             .child(div().w(px(20.))) // Icon space
             .child(div().flex_1().child("NAME"))
             .child(div().w(px(80.)).child("SIZE"))
             .child(div().w(px(100.)).child("MODIFIED"))
     }
 
-    fn render_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.model.read(cx);
         let has_query = !model.query.is_empty();
 
@@ -275,13 +283,13 @@ impl ResultsView {
             .child(
                 div()
                     .text_size(px(48.))
-                    .child(if has_query { "🔍" } else { "💾" }),
+                    .child(if has_query { "🤔" } else { "🔍" }),
             )
             .child(
                 div()
                     .text_size(px(16.))
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(TEXT_SECONDARY)
+                    .text_color(text_secondary())
                     .child(if has_query {
                         "No results found"
                     } else {
@@ -292,7 +300,7 @@ impl ResultsView {
                 this.child(
                     div()
                         .text_size(px(13.))
-                        .text_color(TEXT_DIM)
+                        .text_color(text_dim())
                         .child("Try different search terms or search mode"),
                 )
             })
@@ -300,31 +308,33 @@ impl ResultsView {
 }
 
 impl Render for ResultsView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.model.clone();
         let has_results = !model.read(cx).results.is_empty();
-        let hover_index = self.hover_index;
 
         div()
             .size_full()
-            .bg(TABLE_BG)
+            .bg(table_bg())
             .flex()
             .flex_col()
             .when(has_results, |this| {
-                this.child(self.render_header(cx)).child(
-                    list(self.list_state.clone(), move |ix, _window, cx| {
-                        let model_read = model.read(cx);
-                        if let Some(hit) = model_read.results.get(ix) {
-                            let is_selected = model_read.is_selected(ix);
-                            let is_hover = hover_index == Some(ix);
-                            Self::render_row_static(ix, hit, is_selected, is_hover)
-                                .into_any_element()
-                        } else {
-                            div().into_any_element()
-                        }
-                    })
-                    .size_full()
-                    .track_scroll(self.list_state.clone()),
+                this.child(self.render_header()).child(
+                    list(
+                        self.list_state.clone(),
+                        cx.processor(move |this, ix, _window, cx| {
+                            let (hit, is_selected) = {
+                                let model_read = model.read(cx);
+                                if let Some(hit) = model_read.results.get(ix).cloned() {
+                                    (hit, model_read.is_selected(ix))
+                                } else {
+                                    return div().into_any_element();
+                                }
+                            };
+
+                            this.render_row(ix, &hit, is_selected, cx)
+                        }),
+                    )
+                    .size_full(),
                 )
             })
             .when(!has_results, |this| this.child(self.render_empty_state(cx)))

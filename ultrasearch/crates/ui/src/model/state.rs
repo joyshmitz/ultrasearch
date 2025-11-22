@@ -1,6 +1,6 @@
 use crate::ipc::client::IpcClient;
 use gpui::*;
-use ipc::{SearchHit, SearchMode, SearchRequest, StatusRequest};
+use ipc::{QueryExpr, SearchHit, SearchMode, SearchRequest, StatusRequest, TermExpr, TermModifier};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -55,13 +55,10 @@ pub struct SearchAppModel {
 }
 
 impl SearchAppModel {
-    pub fn new(_cx: &mut AppContext) -> Self {
+    pub fn new(cx: &mut Context<SearchAppModel>) -> Self {
         let client = IpcClient::new();
 
-        // Note: Status polling will be started from the view layer
-        // after the model is created, to avoid global state issues
-
-        Self {
+        let mut model = Self {
             query: String::new(),
             results: Vec::new(),
             status: SearchStatus::default(),
@@ -69,28 +66,39 @@ impl SearchAppModel {
             client,
             search_debounce: None,
             last_search: None,
-        }
+        };
+
+        model.start_status_polling(cx);
+        model
     }
 
-    pub fn start_status_polling(&mut self, cx: &mut Context<Self>) {
+    pub fn start_status_polling(&mut self, cx: &mut Context<SearchAppModel>) {
         let client = self.client.clone();
-        cx.spawn(|this, mut cx| async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                let req = StatusRequest { id: Uuid::new_v4() };
-                if let Ok(resp) = client.status(req).await {
-                    let _ = cx.update_model(&this, |model, cx| {
-                        model.status.connected = true;
-                        model.status.indexing_state = resp.scheduler_state.clone();
-                        cx.notify();
-                    });
+        cx.spawn(move |this: WeakEntity<SearchAppModel>, cx: &mut AsyncApp| {
+            let async_app = cx.clone();
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    let req = StatusRequest { id: Uuid::new_v4() };
+                    if let Ok(resp) = client.status(req).await {
+                        let _ = async_app.update(|app| {
+                            this.update(
+                                app,
+                                |model: &mut SearchAppModel, cx: &mut Context<SearchAppModel>| {
+                                    model.status.connected = true;
+                                    model.status.indexing_state = resp.scheduler_state.clone();
+                                    cx.notify();
+                                },
+                            )
+                        });
+                    }
                 }
             }
         })
         .detach();
     }
 
-    pub fn set_query(&mut self, query: String, cx: &mut Context<Self>) {
+    pub fn set_query(&mut self, query: String, cx: &mut Context<SearchAppModel>) {
         self.query = query;
 
         // Cancel previous debounce task
@@ -98,60 +106,88 @@ impl SearchAppModel {
             drop(task);
         }
 
-        // Debounce search by 150ms for instant feel
         let query_clone = self.query.clone();
         let client = self.client.clone();
         let mode = self.status.backend_mode;
 
-        self.search_debounce = Some(cx.spawn(move |this, mut cx| async move {
-            tokio::time::sleep(Duration::from_millis(150)).await;
+        self.search_debounce = Some(cx.spawn(
+            move |this: WeakEntity<SearchAppModel>, cx: &mut AsyncApp| {
+                let async_app = cx.clone();
+                async move {
+                    tokio::time::sleep(Duration::from_millis(150)).await;
 
-            if query_clone.is_empty() {
-                let _ = cx.update_model(&this, |model, cx| {
-                    model.results.clear();
-                    model.status.total = 0;
-                    model.status.shown = 0;
-                    model.selected_index = None;
-                    cx.notify();
-                });
-                return;
-            }
+                    if query_clone.is_empty() {
+                        let _ = async_app.update(|app| {
+                            this.update(
+                                app,
+                                |model: &mut SearchAppModel, cx: &mut Context<SearchAppModel>| {
+                                    model.results.clear();
+                                    model.status.total = 0;
+                                    model.status.shown = 0;
+                                    model.selected_index = None;
+                                    cx.notify();
+                                },
+                            )
+                        });
+                        return;
+                    }
 
-            let req = SearchRequest {
-                id: Uuid::new_v4(),
-                query: query_clone,
-                limit: 100,
-                mode: mode.into(),
-                timeout: Some(Duration::from_secs(5)),
-                offset: 0,
-            };
-
-            let start = Instant::now();
-            if let Ok(resp) = client.search(req).await {
-                let latency = start.elapsed().as_millis() as u32;
-                let _ = cx.update_model(&this, |model, cx| {
-                    model.results = resp.hits;
-                    model.status.total = resp.total;
-                    model.status.shown = model.results.len();
-                    model.status.last_latency_ms = Some(latency);
-                    model.status.connected = true;
-                    model.selected_index = if !model.results.is_empty() {
-                        Some(0)
-                    } else {
-                        None
+                    let req = SearchRequest {
+                        id: Uuid::new_v4(),
+                        query: QueryExpr::Term(TermExpr {
+                            field: None,
+                            value: query_clone.clone(),
+                            modifier: TermModifier::Term,
+                        }),
+                        limit: 100,
+                        mode: mode.into(),
+                        timeout: Some(Duration::from_secs(5)),
+                        offset: 0,
                     };
-                    cx.notify();
-                });
-            } else {
-                let _ = cx.update_model(&this, |model, cx| {
-                    model.status.connected = false;
-                    cx.notify();
-                });
-            }
-        }));
+
+                    let start = Instant::now();
+                    match client.search(req).await {
+                        Ok(resp) => {
+                            let latency = start.elapsed().as_millis() as u32;
+                            let _ = async_app.update(|app| {
+                                this.update(
+                                    app,
+                                    |model: &mut SearchAppModel,
+                                     cx: &mut Context<SearchAppModel>| {
+                                        model.results = resp.hits;
+                                        model.status.total = resp.total;
+                                        model.status.shown = model.results.len();
+                                        model.status.last_latency_ms = Some(latency);
+                                        model.status.connected = true;
+                                        model.selected_index = if !model.results.is_empty() {
+                                            Some(0)
+                                        } else {
+                                            None
+                                        };
+                                        cx.notify();
+                                    },
+                                )
+                            });
+                        }
+                        Err(_) => {
+                            let _ = async_app.update(|app| {
+                                this.update(
+                                    app,
+                                    |model: &mut SearchAppModel,
+                                     cx: &mut Context<SearchAppModel>| {
+                                        model.status.connected = false;
+                                        cx.notify();
+                                    },
+                                )
+                            });
+                        }
+                    }
+                }
+            },
+        ));
     }
 
-    pub fn set_backend_mode(&mut self, mode: BackendMode, cx: &mut Context<Self>) {
+    pub fn set_backend_mode(&mut self, mode: BackendMode, cx: &mut Context<SearchAppModel>) {
         self.status.backend_mode = mode;
         // Re-trigger search if we have a query
         if !self.query.is_empty() {
@@ -161,7 +197,7 @@ impl SearchAppModel {
         cx.notify();
     }
 
-    pub fn select_next(&mut self, cx: &mut Context<Self>) {
+    pub fn select_next(&mut self, cx: &mut Context<SearchAppModel>) {
         if self.results.is_empty() {
             return;
         }
@@ -173,7 +209,7 @@ impl SearchAppModel {
         cx.notify();
     }
 
-    pub fn select_previous(&mut self, cx: &mut Context<Self>) {
+    pub fn select_previous(&mut self, cx: &mut Context<SearchAppModel>) {
         if self.results.is_empty() {
             return;
         }
