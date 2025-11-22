@@ -5,16 +5,16 @@ use ipc::SearchHit;
 use std::process::Command;
 
 const ROW_HEIGHT: Pixels = px(48.);
-const TABLE_BG: Rgb = rgb(0x1e1e1e);
-const ROW_EVEN: Rgb = rgb(0x1e1e1e);
-const ROW_ODD: Rgb = rgb(0x242424);
-const ROW_HOVER: Rgb = rgb(0x2a2a2a);
-const ROW_SELECTED: Rgb = rgb(0x2d3a4e);
-const ROW_SELECTED_HOVER: Rgb = rgb(0x344661);
-const TEXT_PRIMARY: Rgb = rgb(0xe4e4e4);
-const TEXT_SECONDARY: Rgb = rgb(0x9d9d9d);
-const TEXT_DIM: Rgb = rgb(0x6a6a6a);
-const BORDER_COLOR: Rgb = rgb(0x333333);
+const TABLE_BG: Hsla = hsla(0.0, 0.0, 0.118, 1.0);
+const ROW_EVEN: Hsla = hsla(0.0, 0.0, 0.118, 1.0);
+const ROW_ODD: Hsla = hsla(0.0, 0.0, 0.141, 1.0);
+const ROW_HOVER: Hsla = hsla(0.0, 0.0, 0.165, 1.0);
+const ROW_SELECTED: Hsla = hsla(210.0, 0.274, 0.243, 1.0);
+const ROW_SELECTED_HOVER: Hsla = hsla(210.0, 0.298, 0.294, 1.0);
+const TEXT_PRIMARY: Hsla = hsla(0.0, 0.0, 0.894, 1.0);
+const TEXT_SECONDARY: Hsla = hsla(0.0, 0.0, 0.616, 1.0);
+const TEXT_DIM: Hsla = hsla(0.0, 0.0, 0.416, 1.0);
+const BORDER_COLOR: Hsla = hsla(0.0, 0.0, 0.2, 1.0);
 
 pub struct ResultsView {
     model: Model<SearchAppModel>,

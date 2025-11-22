@@ -10,8 +10,8 @@ use ui::views::preview_view::PreviewView;
 use ui::views::results_table::ResultsView;
 use ui::views::search_view::SearchView;
 
-const APP_BG: Rgb = rgb(0x1a1a1a);
-const DIVIDER_COLOR: Rgb = rgb(0x333333);
+const APP_BG: Hsla = hsla(0.0, 0.0, 0.102, 1.0);
+const DIVIDER_COLOR: Hsla = hsla(0.0, 0.0, 0.2, 1.0);
 
 /// Main application window containing all UI components
 struct UltraSearchWindow {

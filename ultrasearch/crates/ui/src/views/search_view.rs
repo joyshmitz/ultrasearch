@@ -2,17 +2,17 @@ use crate::model::state::{BackendMode, SearchAppModel};
 use gpui::prelude::*;
 use gpui::*;
 
-const SEARCH_BG: Rgb = rgb(0x1a1a1a);
-const SEARCH_BORDER: Rgb = rgb(0x3e3e3e);
-const INPUT_BG: Rgb = rgb(0x2d2d2d);
-const INPUT_BG_FOCUS: Rgb = rgb(0x353535);
-const INPUT_BORDER_FOCUS: Rgb = rgb(0x007acc);
-const TEXT_PRIMARY: Rgb = rgb(0xe4e4e4);
-const TEXT_SECONDARY: Rgb = rgb(0x9d9d9d);
-const TEXT_PLACEHOLDER: Rgb = rgb(0x6a6a6a);
-const ACCENT_BLUE: Rgb = rgb(0x0078d4);
-const STATUS_SUCCESS: Rgb = rgb(0x48bb78);
-const STATUS_ERROR: Rgb = rgb(0xf56565);
+const SEARCH_BG: Hsla = hsla(0.0, 0.0, 0.102, 1.0);
+const SEARCH_BORDER: Hsla = hsla(0.0, 0.0, 0.243, 1.0);
+const INPUT_BG: Hsla = hsla(0.0, 0.0, 0.176, 1.0);
+const INPUT_BG_FOCUS: Hsla = hsla(0.0, 0.0, 0.208, 1.0);
+const INPUT_BORDER_FOCUS: Hsla = hsla(207.0, 1.0, 0.404, 1.0);
+const TEXT_PRIMARY: Hsla = hsla(0.0, 0.0, 0.894, 1.0);
+const TEXT_SECONDARY: Hsla = hsla(0.0, 0.0, 0.616, 1.0);
+const TEXT_PLACEHOLDER: Hsla = hsla(0.0, 0.0, 0.416, 1.0);
+const ACCENT_BLUE: Hsla = hsla(207.0, 1.0, 0.416, 1.0);
+const STATUS_SUCCESS: Hsla = hsla(146.0, 0.444, 0.502, 1.0);
+const STATUS_ERROR: Hsla = hsla(0.0, 0.903, 0.661, 1.0);
 
 pub struct SearchView {
     model: Model<SearchAppModel>,

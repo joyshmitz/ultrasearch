@@ -3,14 +3,14 @@ use gpui::prelude::*;
 use gpui::*;
 use std::process::Command;
 
-const PREVIEW_BG: Rgb = rgb(0x1a1a1a);
-const PREVIEW_BORDER: Rgb = rgb(0x333333);
-const TEXT_PRIMARY: Rgb = rgb(0xe4e4e4);
-const TEXT_SECONDARY: Rgb = rgb(0x9d9d9d);
-const TEXT_DIM: Rgb = rgb(0x6a6a6a);
-const ACCENT_BLUE: Rgb = rgb(0x0078d4);
-const SNIPPET_BG: Rgb = rgb(0x282828);
-const SNIPPET_BORDER: Rgb = rgb(0x3e3e3e);
+const PREVIEW_BG: Hsla = hsla(0.0, 0.0, 0.102, 1.0);
+const PREVIEW_BORDER: Hsla = hsla(0.0, 0.0, 0.2, 1.0);
+const TEXT_PRIMARY: Hsla = hsla(0.0, 0.0, 0.894, 1.0);
+const TEXT_SECONDARY: Hsla = hsla(0.0, 0.0, 0.616, 1.0);
+const TEXT_DIM: Hsla = hsla(0.0, 0.0, 0.416, 1.0);
+const ACCENT_BLUE: Hsla = hsla(207.0, 1.0, 0.416, 1.0);
+const SNIPPET_BG: Hsla = hsla(0.0, 0.0, 0.157, 1.0);
+const SNIPPET_BORDER: Hsla = hsla(0.0, 0.0, 0.243, 1.0);
 
 pub struct PreviewView {
     model: Model<SearchAppModel>,

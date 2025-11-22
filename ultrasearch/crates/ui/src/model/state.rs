@@ -72,7 +72,7 @@ impl SearchAppModel {
         }
     }
 
-    pub fn start_status_polling(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn start_status_polling(&mut self, cx: &mut Context<Self>) {
         let client = self.client.clone();
         cx.spawn(|this, mut cx| async move {
             loop {
@@ -90,7 +90,7 @@ impl SearchAppModel {
         .detach();
     }
 
-    pub fn set_query(&mut self, query: String, cx: &mut ModelContext<Self>) {
+    pub fn set_query(&mut self, query: String, cx: &mut Context<Self>) {
         self.query = query;
 
         // Cancel previous debounce task
@@ -151,7 +151,7 @@ impl SearchAppModel {
         }));
     }
 
-    pub fn set_backend_mode(&mut self, mode: BackendMode, cx: &mut ModelContext<Self>) {
+    pub fn set_backend_mode(&mut self, mode: BackendMode, cx: &mut Context<Self>) {
         self.status.backend_mode = mode;
         // Re-trigger search if we have a query
         if !self.query.is_empty() {
@@ -161,7 +161,7 @@ impl SearchAppModel {
         cx.notify();
     }
 
-    pub fn select_next(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn select_next(&mut self, cx: &mut Context<Self>) {
         if self.results.is_empty() {
             return;
         }
@@ -173,7 +173,7 @@ impl SearchAppModel {
         cx.notify();
     }
 
-    pub fn select_previous(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn select_previous(&mut self, cx: &mut Context<Self>) {
         if self.results.is_empty() {
             return;
         }
