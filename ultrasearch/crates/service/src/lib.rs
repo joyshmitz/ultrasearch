@@ -119,7 +119,8 @@ mod e2e_windows_tests {
         let client =
             PipeClient::new(pipe_name.clone()).with_request_timeout(Duration::from_millis(500));
         let mut ready = false;
-        for _ in 0..10 {
+        sleep(Duration::from_millis(150)).await;
+        for _ in 0..20 {
             let req: StatusRequest = StatusRequest { id: Uuid::new_v4() };
             if client.status(req).await.is_ok() {
                 ready = true;
@@ -230,7 +231,8 @@ mod e2e_windows_tests {
         let client =
             PipeClient::new(pipe_name.clone()).with_request_timeout(Duration::from_millis(750));
         let mut ready = false;
-        for _ in 0..10 {
+        sleep(Duration::from_millis(150)).await;
+        for _ in 0..20 {
             let req: StatusRequest = StatusRequest { id: Uuid::new_v4() };
             if client.status(req).await.is_ok() {
                 ready = true;
@@ -323,7 +325,8 @@ mod e2e_windows_tests {
         let client =
             PipeClient::new(pipe_name.clone()).with_request_timeout(Duration::from_millis(500));
         let mut ready = false;
-        for _ in 0..10 {
+        sleep(Duration::from_millis(150)).await;
+        for _ in 0..20 {
             let req: StatusRequest = StatusRequest { id: Uuid::new_v4() };
             if client.status(req).await.is_ok() {
                 ready = true;

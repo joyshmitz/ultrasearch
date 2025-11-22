@@ -112,6 +112,7 @@ impl SystemLoadSampler {
     }
 }
 
+#[cfg(target_os = "windows")]
 pub trait DiskCounter: Send {
     fn sample_bytes_per_sec(&mut self) -> windows::core::Result<u64>;
 }

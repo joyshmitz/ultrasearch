@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use core_types::config::LoggingSection;
+use std::sync::OnceLock;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initialize tracing/logging for the service process using the provided config.
@@ -83,10 +84,15 @@ pub fn init_tracing_with_config(
     };
 
     if let Err(e) = result {
-        eprintln!(
-            "Tracing init failed (global subscriber already set?): {}",
-            e
-        );
+        static WARNED_ONCE: OnceLock<()> = OnceLock::new();
+        // Common in tests when multiple runtimes initialize tracing.
+        let msg = e.to_string();
+        if !msg.contains("already set") && WARNED_ONCE.set(()).is_ok() {
+            eprintln!(
+                "Tracing init failed (global subscriber already set?): {}",
+                msg
+            );
+        }
     }
 
     Ok(guard)
