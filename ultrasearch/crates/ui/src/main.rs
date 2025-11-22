@@ -12,6 +12,7 @@ use ui::views::search_view::SearchView;
 
 const APP_BG: Hsla = hsla(0.0, 0.0, 0.102, 1.0);
 const DIVIDER_COLOR: Hsla = hsla(0.0, 0.0, 0.2, 1.0);
+const TEXT_PRIMARY: Hsla = hsla(0.0, 0.0, 0.894, 1.0);
 
 /// Main application window containing all UI components
 struct UltraSearchWindow {
@@ -119,8 +120,7 @@ impl Render for UltraSearchWindow {
             .flex()
             .flex_col()
             .bg(APP_BG)
-            .text_color(rgb(0xe4e4e4))
-            .font_family("system-ui, -apple-system, 'Segoe UI', sans-serif")
+            .text_color(TEXT_PRIMARY)
             .child(
                 // Search header - fixed at top
                 div().flex_shrink_0().child(self.search_view.clone()),

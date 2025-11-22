@@ -199,8 +199,6 @@ impl ResultsView {
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(TEXT_PRIMARY)
                             .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
                             .child(name),
                     )
                     .child(
@@ -208,8 +206,6 @@ impl ResultsView {
                             .text_size(px(11.))
                             .text_color(TEXT_SECONDARY)
                             .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
                             .child(path),
                     ),
             )
@@ -220,7 +216,7 @@ impl ResultsView {
                         .px_2()
                         .py_0p5()
                         .rounded_md()
-                        .bg(rgb(0x333333))
+                        .bg(hsla(0.0, 0.0, 0.2, 1.0))
                         .text_size(px(10.))
                         .font_weight(FontWeight::BOLD)
                         .text_color(TEXT_DIM)
@@ -233,7 +229,6 @@ impl ResultsView {
                     .w(px(80.))
                     .text_size(px(12.))
                     .text_color(TEXT_SECONDARY)
-                    .text_align_right()
                     .child(size_text),
             )
             // Modified column
@@ -242,7 +237,6 @@ impl ResultsView {
                     .w(px(100.))
                     .text_size(px(12.))
                     .text_color(TEXT_SECONDARY)
-                    .text_align_right()
                     .child(modified_text),
             )
     }
@@ -255,18 +249,16 @@ impl ResultsView {
             .items_center()
             .px_4()
             .gap_3()
-            .bg(rgb(0x242424))
+            .bg(hsla(0.0, 0.0, 0.141, 1.0))
             .border_b_1()
             .border_color(BORDER_COLOR)
             .text_size(px(11.))
             .font_weight(FontWeight::BOLD)
             .text_color(TEXT_DIM)
-            .text_transform_uppercase()
-            .letter_spacing(px(0.5))
             .child(div().w(px(20.))) // Icon space
-            .child(div().flex_1().child("Name"))
-            .child(div().w(px(80.)).text_align_right().child("Size"))
-            .child(div().w(px(100.)).text_align_right().child("Modified"))
+            .child(div().flex_1().child("NAME"))
+            .child(div().w(px(80.)).child("SIZE"))
+            .child(div().w(px(100.)).child("MODIFIED"))
     }
 
     fn render_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {

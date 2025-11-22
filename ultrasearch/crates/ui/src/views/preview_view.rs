@@ -2,6 +2,7 @@ use crate::model::state::SearchAppModel;
 use gpui::prelude::*;
 use gpui::*;
 use std::process::Command;
+use std::time::Duration;
 
 const PREVIEW_BG: Hsla = hsla(0.0, 0.0, 0.102, 1.0);
 const PREVIEW_BORDER: Hsla = hsla(0.0, 0.0, 0.2, 1.0);
@@ -119,9 +120,7 @@ impl PreviewView {
             .font_weight(FontWeight::MEDIUM)
             .text_size(px(13.))
             .cursor_pointer()
-            .hover(|style| style.bg(rgb(0x106ebe)))
-            .active(|style| style.bg(rgb(0x005a9e)).scale(0.98))
-            .transition_all(Duration::from_millis(150))
+            .hover(|style| style.bg(hsla(207.0, 0.897, 0.556, 1.0)))
             .shadow_md()
             .child(div().text_size(px(16.)).child(icon))
             .child(label)
@@ -136,7 +135,7 @@ impl PreviewView {
             .px_4()
             .py_3()
             .rounded_lg()
-            .bg(rgb(0x242424))
+            .bg(hsla(0.0, 0.0, 0.141, 1.0))
             .child(div().text_size(px(18.)).child(icon))
             .child(
                 div()
@@ -147,9 +146,7 @@ impl PreviewView {
                         div()
                             .text_size(px(11.))
                             .text_color(TEXT_DIM)
-                            .text_transform_uppercase()
-                            .letter_spacing(px(0.5))
-                            .child(label),
+                            .child(label.to_uppercase()),
                     )
                     .child(
                         div()
@@ -200,14 +197,12 @@ impl Render for PreviewView {
                                 .text_size(px(20.))
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(TEXT_PRIMARY)
-                                .line_height(relative(1.3))
                                 .child(name.clone()),
                         )
                         .child(
                             div()
                                 .text_size(px(12.))
                                 .text_color(TEXT_SECONDARY)
-                                .line_height(relative(1.5))
                                 .child(path.clone()),
                         )
                         .child(
@@ -248,10 +243,8 @@ impl Render for PreviewView {
                                 .text_size(px(13.))
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(TEXT_DIM)
-                                .text_transform_uppercase()
-                                .letter_spacing(px(0.8))
                                 .mb_3()
-                                .child("File Details"),
+                                .child("FILE DETAILS"),
                         )
                         .child(self.render_info_row("Size", size_text, "💾"))
                         .child(self.render_info_row("Modified", modified_text, "📅"))
@@ -272,10 +265,8 @@ impl Render for PreviewView {
                                     .text_size(px(13.))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(TEXT_DIM)
-                                    .text_transform_uppercase()
-                                    .letter_spacing(px(0.8))
                                     .mb_2()
-                                    .child("Content Preview"),
+                                    .child("CONTENT PREVIEW"),
                             )
                             .child(
                                 div()
@@ -286,8 +277,6 @@ impl Render for PreviewView {
                                     .rounded_lg()
                                     .text_size(px(12.))
                                     .text_color(TEXT_SECONDARY)
-                                    .line_height(relative(1.6))
-                                    .font_family("'Consolas', 'Monaco', monospace")
                                     .child(hit.snippet.as_ref().unwrap().clone()),
                             ),
                     )
@@ -313,9 +302,6 @@ impl Render for PreviewView {
                     div()
                         .text_size(px(13.))
                         .text_color(TEXT_DIM)
-                        .text_align_center()
-                        .max_w(px(280.))
-                        .line_height(relative(1.5))
                         .child("Select a file from the results to see details and preview"),
                 )
         };

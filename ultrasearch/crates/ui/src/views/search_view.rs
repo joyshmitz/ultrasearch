@@ -1,6 +1,7 @@
 use crate::model::state::{BackendMode, SearchAppModel};
 use gpui::prelude::*;
 use gpui::*;
+use std::time::Duration;
 
 const SEARCH_BG: Hsla = hsla(0.0, 0.0, 0.102, 1.0);
 const SEARCH_BORDER: Hsla = hsla(0.0, 0.0, 0.243, 1.0);
@@ -93,7 +94,6 @@ impl SearchView {
                     .hover(|style| style.bg(INPUT_BG_FOCUS).text_color(TEXT_PRIMARY))
             })
             .cursor_pointer()
-            .transition_colors(Duration::from_millis(150))
             .child(div().text_size(px(14.)).child(icon))
             .child(
                 div()
@@ -136,6 +136,7 @@ impl Render for SearchView {
                     )
                     .child(
                         // Text input with focus ring
+                        // TODO: Replace with gpui-component Input once integrated
                         div()
                             .id("search-input")
                             .flex_1()
@@ -147,22 +148,16 @@ impl Render for SearchView {
                             .rounded_lg()
                             .text_color(TEXT_PRIMARY)
                             .text_size(px(15.))
-                            .placeholder("Search files by name or content...", |style| {
-                                style.text_color(TEXT_PLACEHOLDER)
-                            })
                             .when(cx.focused(&self.focus_handle), |this| {
                                 this.bg(INPUT_BG_FOCUS)
                                     .border_color(INPUT_BORDER_FOCUS)
                                     .shadow_md()
                             })
-                            .transition_all(Duration::from_millis(150))
-                            .child(
-                                TextInput::new(cx)
-                                    .text(self.input_text.clone())
-                                    .on_input(cx.listener(Self::handle_input))
-                                    .placeholder("Search files by name or content...")
-                                    .font_size(px(15.)),
-                            ),
+                            .child(if self.input_text.is_empty() {
+                                "Search files by name or content...".to_string()
+                            } else {
+                                self.input_text.to_string()
+                            }),
                     )
                     .when(has_query, |this| {
                         this.child(
@@ -174,7 +169,6 @@ impl Render for SearchView {
                                 .text_color(TEXT_SECONDARY)
                                 .hover(|style| style.bg(INPUT_BG_FOCUS).text_color(TEXT_PRIMARY))
                                 .cursor_pointer()
-                                .transition_colors(Duration::from_millis(150))
                                 .child("✕")
                                 .on_click(cx.listener(|this, _, cx| this.clear_search(cx))),
                         )
@@ -216,7 +210,7 @@ impl Render for SearchView {
                     .justify_between()
                     .px_4()
                     .py_2()
-                    .bg(rgb(0x242424))
+                    .bg(hsla(0.0, 0.0, 0.141, 1.0))
                     .child(
                         div()
                             .flex()
@@ -271,9 +265,6 @@ impl Render for SearchView {
                                         STATUS_SUCCESS
                                     } else {
                                         STATUS_ERROR
-                                    })
-                                    .when(status.connected, |this| {
-                                        this.animate_pulse(Duration::from_secs(2))
                                     }),
                             )
                             .child(
