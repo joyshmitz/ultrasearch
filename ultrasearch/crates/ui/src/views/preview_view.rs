@@ -118,10 +118,11 @@ impl PreviewView {
         &self,
         icon: &'static str,
         label: &'static str,
+        enabled: bool,
         on_click: impl Fn(&mut Self, &MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        div()
+        let base = div()
             .flex()
             .items_center()
             .gap_2()
@@ -132,12 +133,17 @@ impl PreviewView {
             .text_color(white())
             .font_weight(FontWeight::MEDIUM)
             .text_size(px(13.))
-            .cursor_pointer()
-            .hover(|style| style.bg(hsla(207.0, 0.897, 0.556, 1.0)))
             .shadow_md()
             .child(div().text_size(px(16.)).child(icon))
-            .child(label)
-            .on_mouse_down(MouseButton::Left, cx.listener(on_click))
+            .child(label);
+
+        if enabled {
+            base.cursor_pointer()
+                .hover(|style| style.bg(hsla(207.0, 0.897, 0.556, 1.0)))
+                .on_mouse_down(MouseButton::Left, cx.listener(on_click))
+        } else {
+            base.opacity(0.5).cursor(CursorStyle::Arrow)
+        }
     }
 
     fn render_info_row(&self, label: &str, value: String, icon: &'static str) -> impl IntoElement {
@@ -179,6 +185,7 @@ impl Render for PreviewView {
         let content = if let Some(hit) = selected {
             let name = hit.name.as_deref().unwrap_or("<unknown>").to_string();
             let path = hit.path.clone().unwrap_or_default();
+            let has_path = !path.is_empty();
             let size_text = hit
                 .size
                 .map(Self::format_file_size)
@@ -225,6 +232,7 @@ impl Render for PreviewView {
                                 .child(self.render_action_button(
                                     "📂",
                                     "Open",
+                                    has_path,
                                     {
                                         let path = path.clone();
                                         move |this, _, _, _| this.open_file(&path)
@@ -234,6 +242,7 @@ impl Render for PreviewView {
                                 .child(self.render_action_button(
                                     "🗂",
                                     "Show in Folder",
+                                    has_path,
                                     {
                                         let path = path.clone();
                                         move |this, _, _, _| this.open_in_explorer(&path)
@@ -287,6 +296,7 @@ impl Render for PreviewView {
                                 .border_1()
                                 .border_color(snippet_border())
                                 .rounded_lg()
+                                .max_h(px(260.))
                                 .text_size(px(12.))
                                 .text_color(text_secondary())
                                 .child(snippet),

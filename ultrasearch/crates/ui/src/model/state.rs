@@ -85,17 +85,34 @@ impl SearchAppModel {
                 loop {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     let req = StatusRequest { id: Uuid::new_v4() };
-                    if let Ok(resp) = client.status(req).await {
-                        let _ = async_app.update(|app| {
-                            this.update(
-                                app,
-                                |model: &mut SearchAppModel, cx: &mut Context<SearchAppModel>| {
-                                    model.status.connected = true;
-                                    model.status.indexing_state = resp.scheduler_state.clone();
-                                    cx.notify();
-                                },
-                            )
-                        });
+                    match client.status(req).await {
+                        Ok(resp) => {
+                            let _ = async_app.update(|app| {
+                                this.update(
+                                    app,
+                                    |model: &mut SearchAppModel, cx: &mut Context<SearchAppModel>| {
+                                        model.status.connected = true;
+                                        model.status.indexing_state = resp.scheduler_state.clone();
+                                        cx.notify();
+                                    },
+                                )
+                            });
+                        }
+                        Err(err) => {
+                            tracing::warn!("status poll failed: {err}");
+                            let _ = async_app.update(|app| {
+                                this.update(
+                                    app,
+                                    |model: &mut SearchAppModel, cx: &mut Context<SearchAppModel>| {
+                                        model.status.connected = false;
+                                        model
+                                            .status
+                                            .indexing_state = "Disconnected (status)".to_string();
+                                        cx.notify();
+                                    },
+                                )
+                            });
+                        }
                     }
                 }
             }
@@ -174,13 +191,17 @@ impl SearchAppModel {
                                 )
                             });
                         }
-                        Err(_) => {
+                        Err(err) => {
+                            tracing::warn!("search request failed: {err}");
                             let _ = async_app.update(|app| {
                                 this.update(
                                     app,
                                     |model: &mut SearchAppModel,
                                      cx: &mut Context<SearchAppModel>| {
                                         model.status.connected = false;
+                                        model.status.indexing_state =
+                                            "Disconnected (search)".to_string();
+                                        model.status.last_latency_ms = None;
                                         cx.notify();
                                     },
                                 )
@@ -238,5 +259,16 @@ impl SearchAppModel {
 impl Default for SearchAppModel {
     fn default() -> Self {
         panic!("SearchAppModel must be created with new(cx), not default()")
+    }
+}
+
+impl Drop for SearchAppModel {
+    fn drop(&mut self) {
+        if let Some(task) = self.status_task.take() {
+            drop(task);
+        }
+        if let Some(task) = self.search_debounce.take() {
+            drop(task);
+        }
     }
 }

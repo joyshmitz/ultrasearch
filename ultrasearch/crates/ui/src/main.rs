@@ -208,6 +208,10 @@ fn main() {
                     appears_transparent: false,
                     traffic_light_position: None,
                 }),
+                window_min_size: Some(Size {
+                    width: px(960.0),
+                    height: px(600.0),
+                }),
                 window_background: WindowBackgroundAppearance::Opaque,
                 app_id: Some("com.ultrasearch.desktop".to_string()),
                 ..WindowOptions::default()

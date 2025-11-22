@@ -40,6 +40,8 @@ pub struct SearchView {
     model: Entity<SearchAppModel>,
     focus_handle: FocusHandle,
     input_text: SharedString,
+    cursor: usize,
+    selection: Option<(usize, usize)>, // (start, end)
 }
 
 impl SearchView {
@@ -51,11 +53,176 @@ impl SearchView {
             model,
             focus_handle,
             input_text: "".into(),
+            cursor: 0,
+            selection: None,
         }
     }
 
     pub fn focus_handle(&self) -> FocusHandle {
         self.focus_handle.clone()
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+
+    fn set_selection(&mut self, start: usize, end: usize) {
+        if start == end {
+            self.selection = None;
+        } else {
+            self.selection = Some((start.min(end), start.max(end)));
+        }
+    }
+
+    fn replace_selection(&mut self, text: &str) {
+        if let Some((s, e)) = self.selection.take() {
+            let mut current = self.input_text.to_string();
+            current.replace_range(s..e, text);
+            self.cursor = s + text.len();
+            self.input_text = current.into();
+        } else {
+            self.insert_at_cursor(text);
+        }
+    }
+
+    fn insert_at_cursor(&mut self, text: &str) {
+        let mut current = self.input_text.to_string();
+        current.insert_str(self.cursor, text);
+        self.cursor += text.len();
+        self.input_text = current.into();
+    }
+
+    fn delete_backward(&mut self) {
+        if let Some((s, e)) = self.selection.take() {
+            let mut current = self.input_text.to_string();
+            current.replace_range(s..e, "");
+            self.cursor = s;
+            self.input_text = current.into();
+            return;
+        }
+        if self.cursor == 0 {
+            return;
+        }
+        let mut current = self.input_text.to_string();
+        if let Some((idx, len)) = current[..self.cursor]
+            .char_indices()
+            .last()
+            .map(|(i, c)| (i, c.len_utf8()))
+        {
+            current.drain(idx..idx + len);
+            self.cursor = idx;
+            self.input_text = current.into();
+        }
+    }
+
+    fn delete_forward(&mut self) {
+        if let Some((s, e)) = self.selection.take() {
+            let mut current = self.input_text.to_string();
+            current.replace_range(s..e, "");
+            self.cursor = s;
+            self.input_text = current.into();
+            return;
+        }
+        let current = self.input_text.to_string();
+        if self.cursor >= current.len() {
+            return;
+        }
+        if let Some((off, ch)) = current[self.cursor..].char_indices().next() {
+            let mut new = current;
+            let start = self.cursor + off;
+            new.drain(start..start + ch.len_utf8());
+            self.input_text = new.into();
+        }
+    }
+
+    fn move_cursor_left(&mut self, selecting: bool) {
+        if self.cursor == 0 {
+            return;
+        }
+        let current = self.input_text.to_string();
+        if let Some((idx, _)) = current[..self.cursor].char_indices().last() {
+            if selecting {
+                let anchor = self.selection.map(|(s, _)| s).unwrap_or(self.cursor);
+                self.cursor = idx;
+                self.set_selection(anchor, self.cursor);
+            } else {
+                self.cursor = idx;
+                self.clear_selection();
+            }
+        }
+    }
+
+    fn move_cursor_right(&mut self, selecting: bool) {
+        let current = self.input_text.to_string();
+        if self.cursor >= current.len() {
+            return;
+        }
+        if let Some((off, ch)) = current[self.cursor..].char_indices().next() {
+            let new_pos = self.cursor + off + ch.len_utf8();
+            if selecting {
+                let anchor = self.selection.map(|(s, _)| s).unwrap_or(self.cursor);
+                self.cursor = new_pos;
+                self.set_selection(anchor, self.cursor);
+            } else {
+                self.cursor = new_pos;
+                self.clear_selection();
+            }
+        }
+    }
+
+    fn move_cursor_home(&mut self, selecting: bool) {
+        if selecting {
+            let anchor = self.selection.map(|(s, _)| s).unwrap_or(self.cursor);
+            self.cursor = 0;
+            self.set_selection(anchor, self.cursor);
+        } else {
+            self.cursor = 0;
+            self.clear_selection();
+        }
+    }
+
+    fn move_cursor_end(&mut self, selecting: bool) {
+        let end = self.input_text.len();
+        if selecting {
+            let anchor = self.selection.map(|(s, _)| s).unwrap_or(self.cursor);
+            self.cursor = end;
+            self.set_selection(anchor, self.cursor);
+        } else {
+            self.cursor = end;
+            self.clear_selection();
+        }
+    }
+
+    fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        if let Some((s, e)) = self.selection {
+            let current = self.input_text.to_string();
+            let clip = current[s..e].to_string();
+            cx.write_to_clipboard(ClipboardItem::new_string(clip));
+        }
+    }
+
+    fn cut_selection(&mut self, cx: &mut Context<Self>) {
+        if let Some((s, e)) = self.selection {
+            let mut current = self.input_text.to_string();
+            cx.write_to_clipboard(ClipboardItem::new_string(current[s..e].to_string()));
+            current.replace_range(s..e, "");
+            self.input_text = current.into();
+            self.cursor = s;
+            self.clear_selection();
+            cx.notify();
+        }
+    }
+
+    fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
+        if let Some(item) = cx.read_from_clipboard() {
+            if let Some(s) = item.entries().iter().find_map(|entry| match entry {
+                ClipboardEntry::String(s) => Some(s.clone()),
+                _ => None,
+            }) {
+                self.replace_selection(s.text().as_str());
+                cx.notify();
+            }
+        }
     }
 
     fn handle_input(&mut self, text: &str, cx: &mut Context<Self>) {
@@ -68,6 +235,8 @@ impl SearchView {
 
     fn clear_search(&mut self, cx: &mut Context<Self>) {
         self.input_text = "".into();
+        self.cursor = 0;
+        self.selection = None;
         self.model.update(cx, |model, cx| {
             model.set_query(String::new(), cx);
         });
@@ -135,7 +304,15 @@ impl Render for SearchView {
         let model = self.model.read(cx);
         let status = model.status.clone();
         let query = model.query.clone();
-        let _ = model;
+        // Keep local text in sync if model was changed externally.
+        if query != self.input_text {
+            self.input_text = query.clone().into();
+            let len = self.input_text.len();
+            if self.cursor > len {
+                self.cursor = len;
+            }
+            self.selection = None;
+        }
         let has_query = !query.is_empty();
 
         div()
@@ -167,6 +344,7 @@ impl Render for SearchView {
                         div()
                             .id("search-input")
                             .flex_1()
+                            .tab_index(0)
                             .px_3()
                             .py_2p5()
                             .bg(input_bg())
@@ -180,37 +358,37 @@ impl Render for SearchView {
                                     .border_color(input_border_focus())
                                     .shadow_md()
                             })
-                            .child(if self.input_text.is_empty() {
-                                div()
-                                    .text_color(text_placeholder())
-                                    .child("Search files by name or content...")
-                            } else {
-                                div().child(self.input_text.to_string())
-                            })
                             .cursor(CursorStyle::IBeam)
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, _, window, _| {
+                                cx.listener(|this, event: &MouseDownEvent, window, cx| {
                                     window.focus(&this.focus_handle);
+                                    // approximate: single click places caret at end; double-click selects all
+                                    let len = this.input_text.len();
+                                    this.cursor = len;
+                                    if event.click_count >= 2 {
+                                        this.set_selection(0, len);
+                                    } else {
+                                        this.clear_selection();
+                                    }
+                                    cx.notify();
                                 }),
                             )
                             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                                if event.is_held {
-                                    return;
-                                }
                                 let mods = &event.keystroke.modifiers;
                                 let control = mods.control || mods.platform;
+                                let shift = mods.shift;
                                 match event.keystroke.key.as_str() {
                                     "backspace" => {
-                                        let mut current = this.input_text.to_string();
-                                        current.pop();
-                                        this.handle_input(&current, cx);
+                                        this.delete_backward();
+                                        let updated = this.input_text.to_string();
+                                        this.handle_input(&updated, cx);
                                         cx.stop_propagation();
                                     }
                                     "delete" => {
-                                        let mut current = this.input_text.to_string();
-                                        current.pop();
-                                        this.handle_input(&current, cx);
+                                        this.delete_forward();
+                                        let updated = this.input_text.to_string();
+                                        this.handle_input(&updated, cx);
                                         cx.stop_propagation();
                                     }
                                     "enter" => {
@@ -219,18 +397,83 @@ impl Render for SearchView {
                                         });
                                         cx.stop_propagation();
                                     }
+                                    "left" => {
+                                        this.move_cursor_left(shift);
+                                        cx.stop_propagation();
+                                    }
+                                    "right" => {
+                                        this.move_cursor_right(shift);
+                                        cx.stop_propagation();
+                                    }
+                                    "home" => {
+                                        this.move_cursor_home(shift);
+                                        cx.stop_propagation();
+                                    }
+                                    "end" => {
+                                        this.move_cursor_end(shift);
+                                        cx.stop_propagation();
+                                    }
+                                    "a" if control => {
+                                        this.set_selection(0, this.input_text.len());
+                                        this.cursor = this.input_text.len();
+                                        cx.stop_propagation();
+                                    }
+                                    "c" if control => {
+                                        this.copy_selection(cx);
+                                        cx.stop_propagation();
+                                    }
+                                    "x" if control => {
+                                        this.cut_selection(cx);
+                                        cx.stop_propagation();
+                                    }
+                                    "v" if control => {
+                                        this.paste_clipboard(cx);
+                                        let updated = this.input_text.to_string();
+                                        this.handle_input(&updated, cx);
+                                        cx.stop_propagation();
+                                    }
                                     _ => {
                                         if !control && !mods.alt {
                                             if let Some(ch) = &event.keystroke.key_char {
-                                                let mut current = this.input_text.to_string();
-                                                current.push_str(ch);
-                                                this.handle_input(&current, cx);
+                                                this.replace_selection(ch);
+                                                let updated = this.input_text.to_string();
+                                                this.handle_input(&updated, cx);
                                                 cx.stop_propagation();
                                             }
                                         }
                                     }
                                 };
-                            })),
+                            }))
+                            .child({
+                                if self.input_text.is_empty() {
+                                    div()
+                                        .text_color(text_placeholder())
+                                        .child("Search files by name or content...")
+                                } else {
+                                    let text = self.input_text.to_string();
+                                    let (sel_start, sel_end) =
+                                        self.selection.unwrap_or((self.cursor, self.cursor));
+                                    let head = SharedString::from(text[..sel_start].to_string());
+                                    let sel_str =
+                                        SharedString::from(text[sel_start..sel_end].to_string());
+                                    let tail = SharedString::from(text[sel_end..].to_string());
+                                    let caret = div().w(px(1.5)).h(px(18.)).bg(text_primary());
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .child(div().child(head.clone()))
+                                        .when(sel_start != sel_end, |d| {
+                                            d.child(
+                                                div()
+                                                    .bg(hsla(207.0, 1.0, 0.416, 0.2))
+                                                    .text_color(text_primary())
+                                                    .child(sel_str.clone()),
+                                            )
+                                        })
+                                        .when(sel_start == sel_end, |d| d.child(caret))
+                                        .child(div().child(tail))
+                                }
+                            }),
                     )
                     .when(has_query, |this| {
                         this.child(

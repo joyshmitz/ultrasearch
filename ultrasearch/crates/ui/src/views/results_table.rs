@@ -340,7 +340,15 @@ impl Render for ResultsView {
             .bg(table_bg())
             .flex()
             .flex_col()
-            .when(has_results, |this| {
+            .on_mouse_move(cx.listener(|this, _, _, cx| {
+                this.hover_index = None;
+                cx.notify();
+            }))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.hover_index = None;
+                cx.notify();
+            }))
+            .when(has_results, |this: Div| {
                 this.child(self.render_header()).child(
                     list(
                         self.list_state.clone(),
@@ -361,6 +369,8 @@ impl Render for ResultsView {
                     .size_full(),
                 )
             })
-            .when(!has_results, |this| this.child(self.render_empty_state(cx)))
+            .when(!has_results, |this: Div| {
+                this.child(self.render_empty_state(cx))
+            })
     }
 }
