@@ -8,7 +8,7 @@ use hnsw_rs::prelude::*;
 /// A semantic index storing embeddings for document chunks.
 pub struct SemanticIndex {
     #[cfg(feature = "hnsw_rs")]
-    index: Hnsw<f32, DistCosine>,
+    index: Hnsw<'static, f32, DistCosine>,
     #[cfg(not(feature = "hnsw_rs"))]
     _stub: (),
 }
