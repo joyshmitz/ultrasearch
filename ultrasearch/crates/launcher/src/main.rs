@@ -10,6 +10,8 @@ use std::{
     thread::sleep,
     time::Duration,
 };
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
 
@@ -71,8 +73,9 @@ fn main() -> Result<()> {
     service_cmd
         .arg("--console")
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(0x08000000); // CREATE_NO_WINDOW
     let mut service = ChildGuard::spawn("service", &mut service_cmd)?;
     println!("{}", style("service started, waiting for IPC...").dim());
 
