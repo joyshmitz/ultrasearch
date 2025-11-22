@@ -16,3 +16,11 @@ serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 futures = "0.3"
 uuid = { workspace = true }
+
+[package.metadata.wix]
+upgrade-guid = "F5B2C1A2-5BC0-4C5D-93E4-0D6F9A6C9E11"
+path-to-wxs = "wix/main.wxs"
+description = "UltraSearch desktop client"
+license = "MIT OR Apache-2.0"
+manufacturer = "Ultrasearch Team"
+homepage = "https://github.com/Dicklesworthstone/ultrasearch"
