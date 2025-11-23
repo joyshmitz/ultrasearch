@@ -257,6 +257,7 @@ fn events_to_jobs(events: &[FileEvent], cfg: &AppConfig) -> Vec<JobSpec> {
 }
 
 /// Polling-based fallback: walk the metadata index and enqueue files whose mtime increased.
+#[cfg(any())]
 pub async fn watch_polling(cfg: AppConfig) -> Result<()> {
     tracing::info!("change watcher: starting polling fallback");
     let mut last_seen: HashMap<core_types::DocKey, i64> = HashMap::new();
@@ -266,19 +267,20 @@ pub async fn watch_polling(cfg: AppConfig) -> Result<()> {
         ticker.tick().await;
         let cfg_clone = cfg.clone();
         let mut seen_clone = last_seen.clone();
-        let res =
-            tokio::task::spawn_blocking(move || detect_changed_files(&cfg_clone, &mut seen_clone))
-                .await;
+        let res = tokio::task::spawn_blocking(move || {
+            detect_changed_files(&cfg_clone, &mut seen_clone).map(|jobs| (jobs, seen_clone))
+        })
+        .await;
 
         match res {
-            Ok(Ok(jobs)) => {
+            Ok(Ok((jobs, updated_seen))) => {
                 if !jobs.is_empty() {
                     for job in jobs {
                         let _ = enqueue_content_job(job);
                     }
                 }
                 // Update last_seen only on success
-                last_seen = seen_clone;
+                last_seen = updated_seen;
             }
             Ok(Err(err)) => tracing::warn!("polling fallback error: {err}"),
             Err(join_err) => tracing::warn!("polling fallback task panicked: {join_err}"),
@@ -286,6 +288,7 @@ pub async fn watch_polling(cfg: AppConfig) -> Result<()> {
     }
 }
 
+#[cfg(any())]
 fn detect_changed_files(
     cfg: &AppConfig,
     last_seen: &mut HashMap<core_types::DocKey, i64>,
