@@ -10,6 +10,7 @@ pub enum UserAction {
     Show,
     Quit,
     ToggleQuickSearch,
+    HotkeyConflict,
 }
 
 pub fn spawn() -> Result<Receiver<UserAction>> {
@@ -20,7 +21,10 @@ pub fn spawn() -> Result<Receiver<UserAction>> {
         let hotkey_manager = GlobalHotKeyManager::new().unwrap();
         // Alt + Space
         let hotkey = HotKey::new(Some(Modifiers::ALT), Code::Space);
-        let _ = hotkey_manager.register(hotkey);
+        if let Err(e) = hotkey_manager.register(hotkey) {
+            eprintln!("Failed to register hotkey: {}", e);
+            let _ = tx.send(UserAction::HotkeyConflict);
+        }
 
         // --- Tray ---
         // 1. Create Menu

@@ -4,31 +4,18 @@
 //! search with deep content indexing, wrapped in a beautiful native UI.
 
 use gpui::prelude::*;
-use gpui::{actions, App, AppContext, AsyncApp, KeyBinding, *};
+use gpui::{App, AppContext, AsyncApp, KeyBinding, *};
+use ui::globals::GlobalAppState;
 use ui::icon_cache::IconCache;
 use ui::model::state::{BackendMode, SearchAppModel};
 use ui::theme::{self, Theme};
+use ui::views::onboarding::OnboardingView;
 use ui::views::preview_view::PreviewView;
 use ui::views::quick_search::QuickBarView;
 use ui::views::results_table::ResultsView;
 use ui::views::search_view::SearchView;
 
-actions!(
-    ultrasearch,
-    [
-        FocusSearch,
-        ClearSearch,
-        SubmitSearch,
-        SelectNext,
-        SelectPrev,
-        OpenSelected,
-        ModeMetadata,
-        ModeMixed,
-        ModeContent,
-        CopySelectedPath,
-        QuitApp
-    ]
-);
+use ui::actions::*;
 
 /// Main application window containing all UI components
 struct UltraSearchWindow {
@@ -36,16 +23,23 @@ struct UltraSearchWindow {
     search_view: Entity<SearchView>,
     results_view: Entity<ResultsView>,
     preview_view: Entity<PreviewView>,
+    onboarding_view: Entity<OnboardingView>,
     focus_handle: FocusHandle,
 }
 
 impl UltraSearchWindow {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(cx: &mut Context<Self>, show_onboarding: bool) -> Self {
         let model = cx.new(SearchAppModel::new);
+        
+        // Update model with onboarding state
+        model.update(cx, |model, _cx| {
+            model.show_onboarding = show_onboarding;
+        });
 
         let search_view = cx.new(|cx| SearchView::new(model.clone(), cx));
         let results_view = cx.new(|cx| ResultsView::new(model.clone(), cx));
         let preview_view = cx.new(|cx| PreviewView::new(model.clone(), cx));
+        let onboarding_view = cx.new(|cx| OnboardingView::new(model.clone(), cx));
 
         let focus_handle = cx.focus_handle();
 
@@ -54,6 +48,7 @@ impl UltraSearchWindow {
             search_view,
             results_view,
             preview_view,
+            onboarding_view,
             focus_handle,
         }
     }
@@ -130,6 +125,51 @@ impl UltraSearchWindow {
         cx.quit();
     }
 
+    fn on_finish_onboarding(&mut self, _: &crate::FinishOnboarding, _window: &mut Window, cx: &mut Context<Self>) {
+        self.model.update(cx, |model, cx| {
+            model.show_onboarding = false;
+            cx.notify();
+        });
+    }
+
+    fn on_open_folder(&mut self, _: &crate::OpenContainingFolder, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self.model.read(cx).selected_row().and_then(|hit| hit.path.clone()) {
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("explorer").arg("/select,").arg(&path).spawn();
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(parent) = std::path::Path::new(&path).parent() {
+                    let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
+                }
+            }
+        }
+    }
+
+    fn on_show_properties(&mut self, _: &crate::ShowProperties, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self.model.read(cx).selected_row().and_then(|hit| hit.path.clone()) {
+            #[cfg(target_os = "windows")]
+            {
+                use windows::Win32::UI::Shell::{SHObjectProperties, SHOP_FILEPATH};
+                use windows::core::{PCWSTR, HSTRING};
+                
+                let path_wide = HSTRING::from(&path);
+                // Run on background thread to avoid blocking UI
+                cx.spawn(|_, _: &mut AsyncApp| async move {
+                    unsafe {
+                        // 0 = props page
+                        let _ = SHObjectProperties(None, SHOP_FILEPATH, PCWSTR(path_wide.as_ptr()), PCWSTR::null());
+                    }
+                }).detach();
+            }
+        }
+    }
+
     fn open_selected(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(path) = self
             .model
@@ -156,6 +196,7 @@ impl UltraSearchWindow {
 impl Render for UltraSearchWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme::active_colors(cx);
+        let show_onboarding = self.model.read(cx).show_onboarding;
 
         div()
             .track_focus(&self.focus_handle)
@@ -170,6 +211,9 @@ impl Render for UltraSearchWindow {
             .on_action(cx.listener(Self::on_mode_content))
             .on_action(cx.listener(Self::on_copy_selected_path))
             .on_action(cx.listener(Self::on_quit))
+            .on_action(cx.listener(Self::on_finish_onboarding))
+            .on_action(cx.listener(Self::on_open_folder))
+            .on_action(cx.listener(Self::on_show_properties))
             .size_full()
             .flex()
             .flex_col()
@@ -204,15 +248,20 @@ impl Render for UltraSearchWindow {
                             .child(self.preview_view.clone()),
                     ),
             )
+            // Onboarding Overlay
+            .when(show_onboarding, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .bg(hsla(0.0, 0.0, 0.0, 0.5)) // Dim background
+                        .child(self.onboarding_view.clone())
+                )
+            })
     }
 }
-
-struct GlobalAppState {
-    quick_bar: Option<WindowHandle<QuickBarView>>,
-    icon_cache: Model<IconCache>,
-}
-
-impl Global for GlobalAppState {}
 
 fn main() {
     // Provide a Tokio runtime so async tasks in the UI (status/search polling) have a reactor.
@@ -223,9 +272,11 @@ fn main() {
     let _rt_guard = runtime.enter();
 
     // Load configuration
-    if let Err(e) = core_types::config::load_or_create_config(None) {
-        eprintln!("Failed to load configuration: {}", e);
-        eprintln!("Continuing with default configuration...");
+    let config = core_types::config::load_or_create_config(None).ok();
+    let show_onboarding = config.as_ref().map(|c| c.volumes.is_empty()).unwrap_or(true);
+
+    if config.is_none() {
+        eprintln!("Failed to load configuration, proceeding with defaults (and onboarding).");
     }
 
     // Start Background Tasks (Tray + Hotkeys)
@@ -240,9 +291,11 @@ fn main() {
     // Initialize GPUI application
     Application::new().run(move |cx: &mut App| {
         // Initialize Theme
-        cx.set_global(Theme::detect());
+        let initial_theme = Theme::detect();
+        let theme_model = cx.new(|_| Theme::new(initial_theme));
 
         // Theme Polling Task
+        let theme_handle = theme_model.clone();
         cx.spawn(|cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
@@ -255,9 +308,11 @@ fn main() {
                     let current = Theme::detect();
                     if current != last_theme {
                         last_theme = current;
-                        let _ = cx.update(|cx: &mut App| {
-                            cx.set_global(current);
-                            cx.refresh(); // Force redraw
+                        let _ = cx.update(|cx| {
+                            theme_handle.update(cx, |theme, cx| {
+                                theme.mode = current;
+                                cx.notify();
+                            });
                         });
                     }
                 }
@@ -265,10 +320,11 @@ fn main() {
         }).detach();
 
         // Initialize Icon Cache
-        let icon_cache = cx.new_model(|cx| IconCache::new(cx));
+        let icon_cache = cx.new(|cx| IconCache::new(cx));
         cx.set_global(GlobalAppState { 
             quick_bar: None,
-            icon_cache 
+            icon_cache,
+            theme: theme_model,
         });
 
         // Handle Background Events
@@ -330,6 +386,11 @@ fn main() {
                                         }
                                     });
                                 }
+                                ui::background::UserAction::HotkeyConflict => {
+                                    eprintln!("⚠️ Hotkey conflict detected for Alt+Space!");
+                                    // In a real app, show a toast or modal dialog here.
+                                    // For now, we log to console.
+                                }
                             }
                         }
                         // Poll interval
@@ -388,7 +449,7 @@ fn main() {
                 app_id: Some("com.ultrasearch.desktop".to_string()),
                 ..WindowOptions::default()
             },
-            |_, cx| cx.new(UltraSearchWindow::new),
+            move |_, cx| cx.new(|cx| UltraSearchWindow::new(cx, show_onboarding)),
         )
         .expect("Failed to open window");
 

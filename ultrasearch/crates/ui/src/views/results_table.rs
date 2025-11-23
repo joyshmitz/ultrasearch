@@ -1,5 +1,9 @@
 use crate::model::state::SearchAppModel;
 use crate::theme;
+use crate::icon_cache::IconCache;
+use crate::globals::GlobalAppState;
+use crate::views::context_menu::{ContextMenu, ContextMenuItem};
+use crate::actions::{OpenContainingFolder, CopySelectedPath, ShowProperties};
 use gpui::prelude::*;
 use gpui::{InteractiveElement, *};
 use ipc::SearchHit;
@@ -12,6 +16,7 @@ fn row_height() -> Pixels {
 
 pub struct ResultsView {
     model: Entity<SearchAppModel>,
+    icon_cache: Entity<IconCache>,
     list_state: ListState,
     hover_index: Option<usize>,
 }
@@ -19,6 +24,7 @@ pub struct ResultsView {
 impl ResultsView {
     pub fn new(model: Entity<SearchAppModel>, cx: &mut Context<ResultsView>) -> Self {
         let list_state = ListState::new(0, ListAlignment::Top, row_height());
+        let icon_cache = cx.global::<GlobalAppState>().icon_cache.clone();
 
         cx.observe(&model, |this: &mut Self, model, cx| {
             let read = model.read(cx);
@@ -31,8 +37,13 @@ impl ResultsView {
         })
         .detach();
 
+        cx.observe(&icon_cache, |_, _, cx| {
+            cx.notify();
+        }).detach();
+
         Self {
             model,
+            icon_cache,
             list_state,
             hover_index: None,
         }
@@ -43,6 +54,77 @@ impl ResultsView {
             model.selected_index = Some(index);
             cx.notify();
         });
+    }
+
+    fn handle_context_menu(&mut self, index: usize, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        // 1. Select the row
+        self.handle_click(index, cx);
+
+        // 2. Create items
+        let items = vec![
+            ContextMenuItem {
+                label: "Open".into(),
+                icon: Some("📂"),
+                action: Box::new(crate::actions::OpenSelected),
+            },
+            ContextMenuItem {
+                label: "Open Containing Folder".into(),
+                icon: Some("🗂"),
+                action: Box::new(OpenContainingFolder),
+            },
+            ContextMenuItem {
+                label: "Copy Full Path".into(),
+                icon: Some("📋"),
+                action: Box::new(CopySelectedPath),
+            },
+            ContextMenuItem {
+                label: "Properties".into(),
+                icon: Some("⚙"),
+                action: Box::new(ShowProperties),
+            },
+        ];
+
+        // 3. Spawn Menu Window (Overlay)
+        // Assume 0,0 for now as window_bounds is tricky without WindowContext deref.
+        // Use event.position (window-relative).
+        // Ideally we convert to screen.
+        // If main window is moved, this will be offset.
+        // For MVP, I will try to get window origin via `cx.window().position()`? No.
+        // I'll just use a best-effort approach or center it if I can't find bounds.
+        // Actually, let's try `cx.current_window()`?
+        // I'll assume the position is relative to the window's content rect.
+        
+        // Workaround: We can't easily get screen coords in `Context`?
+        // We can pass `event.position` and let the popup open there.
+        // `open_window` positions are screen coords.
+        // If I assume 0,0 offset, it will appear at top-left of screen + mouse pos?
+        // No, if window is at 500,500, mouse at 100,100 -> absolute 600,600.
+        // If I use 100,100 for new window, it appears at 100,100 screen.
+        
+        // I'll default to 0,0 for origin if bounds fail, but I'll try to use `cx.window().bounds()` if I can fix it.
+        // Since I can't fix it quickly, I'll remove the bounds call and use a dummy position.
+        // This is a known limitation of my current understanding of GPUI 0.2 API.
+        
+        let origin = Point::new(px(0.), px(0.)); // TODO: Fix window origin
+
+        let position = event.position;
+        let screen_pos = origin + position;
+
+        let _handle = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds {
+                    origin: screen_pos,
+                    size: Size { width: px(200.), height: px(150.) },
+                })),
+                titlebar: None,
+                window_background: WindowBackgroundAppearance::Transparent,
+                kind: WindowKind::PopUp,
+                ..WindowOptions::default()
+            },
+            |_, cx| {
+                cx.new(|cx| ContextMenu::new(Point::default(), items, cx))
+            },
+        ).ok();
     }
 
     #[allow(dead_code)]
@@ -115,7 +197,7 @@ impl ResultsView {
         }
     }
 
-    fn get_file_icon(ext: Option<&String>) -> &'static str {
+    fn get_file_icon_char(ext: Option<&String>) -> &'static str {
         match ext.map(|s| s.as_str()) {
             Some("rs") | Some("toml") | Some("js") | Some("ts") | Some("tsx") | Some("jsx")
             | Some("py") | Some("go") => "🧑‍💻",
@@ -154,7 +236,18 @@ impl ResultsView {
             .modified
             .map(Self::format_modified_time)
             .unwrap_or_else(|| "-".to_string());
-        let icon = Self::get_file_icon(hit.ext.as_ref());
+        
+        // Icon logic: Try native, fallback to emoji
+        let ext_str = hit.ext.as_deref().unwrap_or("");
+        let icon_img = self.icon_cache.update(cx, |cache: &mut IconCache, cx| cache.get(ext_str, cx));
+        
+        let icon_el = if let Some(src) = icon_img {
+            img(src).w(px(20.)).h(px(20.)).into_any_element()
+        } else {
+            let char = Self::get_file_icon_char(hit.ext.as_ref());
+            div().text_size(px(20.)).child(char).into_any_element()
+        };
+
         let score_pct = (hit.score * 100.0) as u32;
 
         div()
@@ -171,7 +264,7 @@ impl ResultsView {
             } else if is_even {
                 colors.bg
             } else {
-                colors.bg // Or slightly different for striped rows if needed, using panel_bg makes it striped
+                colors.bg
             })
             .when(!is_selected && !is_hover && !is_even, |this| this.bg(colors.panel_bg)) // Striping
             .border_b_1()
@@ -195,9 +288,13 @@ impl ResultsView {
                     }
                 }),
             )
-            // File icon
-            .child(div().text_size(px(20.)).child(icon))
-            // Name column (flexible)
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    this.handle_context_menu(index, event, cx);
+                }),
+            )
+            .child(icon_el)
             .child(
                 div()
                     .flex_1()

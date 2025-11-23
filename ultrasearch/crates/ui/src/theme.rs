@@ -1,27 +1,21 @@
 use gpui::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Theme {
+pub enum ThemeMode {
     Light,
     Dark,
 }
 
-impl Global for Theme {}
-
-#[derive(Debug, Clone)]
-pub struct ThemeColors {
-    pub bg: Hsla,
-    pub divider: Hsla,
-    pub text_primary: Hsla,
-    pub text_secondary: Hsla,
-    pub match_highlight: Hsla,
-    pub selection_bg: Hsla,
-    pub border: Hsla,
-    pub panel_bg: Hsla,
+pub struct Theme {
+    pub mode: ThemeMode,
 }
 
 impl Theme {
-    pub fn detect() -> Self {
+    pub fn new(mode: ThemeMode) -> Self {
+        Self { mode }
+    }
+
+    pub fn detect() -> ThemeMode {
         #[cfg(target_os = "windows")]
         {
             use windows::core::w;
@@ -31,9 +25,6 @@ impl Theme {
                 RRF_RT_REG_DWORD,
             };
 
-            // HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize
-            // Value: AppsUseLightTheme (1 = Light, 0 = Dark)
-            
             let subkey = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
             let value = w!("AppsUseLightTheme");
 
@@ -54,20 +45,18 @@ impl Theme {
 
             if result.is_ok() {
                 if data == 1 {
-                    return Theme::Light;
+                    return ThemeMode::Light;
                 } else {
-                    return Theme::Dark;
+                    return ThemeMode::Dark;
                 }
             }
         }
-
-        // Default fallback
-        Theme::Dark
+        ThemeMode::Dark
     }
 
     pub fn colors(&self) -> ThemeColors {
-        match self {
-            Theme::Dark => ThemeColors {
+        match self.mode {
+            ThemeMode::Dark => ThemeColors {
                 bg: hsla(0.0, 0.0, 0.102, 1.0),           // #1a1a1a
                 divider: hsla(0.0, 0.0, 0.2, 1.0),        // #333333
                 text_primary: hsla(0.0, 0.0, 0.894, 1.0), // #e4e4e4
@@ -77,7 +66,7 @@ impl Theme {
                 border: hsla(0.0, 0.0, 0.25, 1.0),
                 panel_bg: hsla(0.0, 0.0, 0.13, 1.0),
             },
-            Theme::Light => ThemeColors {
+            ThemeMode::Light => ThemeColors {
                 bg: hsla(0.0, 0.0, 0.98, 1.0),            // #fafafa
                 divider: hsla(0.0, 0.0, 0.9, 1.0),        // #e5e5e5
                 text_primary: hsla(0.0, 0.0, 0.1, 1.0),   // #1a1a1a
@@ -91,10 +80,24 @@ impl Theme {
     }
 }
 
-pub fn current_theme(cx: &App) -> Theme {
-    cx.try_global::<Theme>().cloned().unwrap_or(Theme::Dark)
+#[derive(Debug, Clone)]
+pub struct ThemeColors {
+    pub bg: Hsla,
+    pub divider: Hsla,
+    pub text_primary: Hsla,
+    pub text_secondary: Hsla,
+    pub match_highlight: Hsla,
+    pub selection_bg: Hsla,
+    pub border: Hsla,
+    pub panel_bg: Hsla,
 }
 
+use crate::globals::GlobalAppState;
+
 pub fn active_colors(cx: &App) -> ThemeColors {
-    current_theme(cx).colors()
+    if let Some(state) = cx.try_global::<GlobalAppState>() {
+        state.theme.read(cx).colors()
+    } else {
+        Theme::new(ThemeMode::Dark).colors()
+    }
 }

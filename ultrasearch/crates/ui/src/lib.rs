@@ -1,4 +1,6 @@
+pub mod actions;
 pub mod background;
+pub mod globals;
 pub mod icon_cache;
 pub mod ipc;
 pub mod model;

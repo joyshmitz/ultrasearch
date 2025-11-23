@@ -1,5 +1,8 @@
 use anyhow::Result;
-use ipc::{SearchRequest, SearchResponse, StatusRequest, StatusResponse};
+use ipc::{
+    ReloadConfigRequest, ReloadConfigResponse, SearchRequest, SearchResponse, StatusRequest,
+    StatusResponse,
+};
 #[cfg(windows)]
 use std::sync::Arc;
 
@@ -63,6 +66,21 @@ impl IpcClient {
                 scheduler_state: "ui-stub".into(),
                 metrics: None,
                 served_by: Some("ui-stub".into()),
+            })
+        }
+    }
+
+    pub async fn reload_config(&self, req: ReloadConfigRequest) -> Result<ReloadConfigResponse> {
+        #[cfg(windows)]
+        {
+            self.inner.reload_config(req).await
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(ReloadConfigResponse {
+                id: req.id,
+                success: true,
+                message: Some("ui-stub".into()),
             })
         }
     }

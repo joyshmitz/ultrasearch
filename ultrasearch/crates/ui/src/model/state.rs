@@ -55,6 +55,7 @@ pub struct SearchAppModel {
     pub search_debounce: Option<Task<()>>,
     pub status_task: Option<Task<()>>,
     pub last_search: Option<Instant>,
+    pub show_onboarding: bool,
 }
 
 impl SearchAppModel {
@@ -70,6 +71,7 @@ impl SearchAppModel {
             search_debounce: None,
             status_task: None,
             last_search: None,
+            show_onboarding: false,
         };
 
         model.start_status_polling(cx);

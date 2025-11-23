@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- WiX installer for UltraSearch UI (unsigned). Build with `cargo wix` inside crates/ui`. -->
+<!-- WiX installer for UltraSearch (Service + UI). -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product
       Id="*"
@@ -29,7 +29,7 @@
       <Directory Id="DesktopFolder" />
     </Directory>
 
-    <!-- Files -->
+    <!-- UI Component -->
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="cmp_ui_exe" Guid="*">
         <File Id="fil_ui_exe" Source="$(var.CargoTargetBinDir)\ui.exe" KeyPath="yes" />
@@ -46,11 +46,51 @@
                   Advertise="yes"
                   Description="UltraSearch desktop search" />
       </Component>
+
+      <!-- Service Component -->
+      <Component Id="cmp_service_exe" Guid="*">
+        <File Id="fil_service_exe" Source="$(var.CargoTargetBinDir)\ultrasearch-service.exe" KeyPath="yes" />
+        
+        <ServiceInstall
+            Id="ServiceInstaller"
+            Type="ownProcess"
+            Name="UltraSearchService"
+            DisplayName="UltraSearch Indexing Service"
+            Description="Provides high-performance file indexing for UltraSearch."
+            Start="auto"
+            Account="LocalSystem"
+            ErrorControl="normal"
+            Vital="yes" />
+            
+        <ServiceControl 
+            Id="StartService" 
+            Start="install" 
+            Stop="both" 
+            Remove="uninstall" 
+            Name="UltraSearchService" 
+            Wait="yes" />
+      </Component>
+
+      <!-- Protocol Handler Component -->
+      <Component Id="cmp_protocol_handler" Guid="*">
+        <RegistryKey Root="HKCR" Key="ultrasearch">
+            <RegistryValue Type="string" Value="URL:UltraSearch Protocol" KeyPath="yes" />
+            <RegistryValue Type="string" Name="URL Protocol" Value="" />
+            <RegistryKey Key="shell\open\command">
+                <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]ui.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Key="DefaultIcon">
+                <RegistryValue Type="string" Value="[INSTALLFOLDER]ui.exe,0" />
+            </RegistryKey>
+        </RegistryKey>
+      </Component>
     </DirectoryRef>
 
     <!-- Features -->
     <Feature Id="MainFeature" Title="UltraSearch" Level="1">
       <ComponentRef Id="cmp_ui_exe" />
+      <ComponentRef Id="cmp_service_exe" />
+      <ComponentRef Id="cmp_protocol_handler" />
     </Feature>
 
     <!-- ARP metadata -->
