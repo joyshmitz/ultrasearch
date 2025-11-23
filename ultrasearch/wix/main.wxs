@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX Installer for UltraSearch
+  Combines Service, UI, and Launcher into a single MSI.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+      Id="*"
+      Name="UltraSearch"
+      Language="1033"
+      Version="0.1.0"
+      Manufacturer="Ultrasearch Team"
+      UpgradeCode="F5B2C1A2-5BC0-4C5D-93E4-0D6F9A6C9E11">
+
+    <Package
+        InstallerVersion="500"
+        Compressed="yes"
+        InstallScope="perMachine"
+        InstallPrivileges="elevated" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of UltraSearch is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Icon -->
+    <Icon Id="ProductIcon" SourceFile="ultrasearch/assets/icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+
+    <!-- Application directories -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="UltraSearch" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="UltraSearch" />
+      </Directory>
+      <Directory Id="DesktopFolder" />
+    </Directory>
+
+    <!-- UI Component -->
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="cmp_ui_exe" Guid="*">
+        <File Id="fil_ui_exe" Source="target\release\ui.exe" KeyPath="yes" />
+      </Component>
+
+      <Component Id="cmp_launcher_exe" Guid="*">
+        <File Id="fil_launcher_exe" Source="target\release\launcher.exe" KeyPath="yes" />
+        <Shortcut Id="sc_startmenu"
+                  Directory="ApplicationProgramsFolder"
+                  Name="UltraSearch"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Advertise="yes"
+                  Icon="ProductIcon"
+                  Description="Launch UltraSearch" />
+        <Shortcut Id="sc_desktop"
+                  Directory="DesktopFolder"
+                  Name="UltraSearch"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Advertise="yes"
+                  Icon="ProductIcon"
+                  Description="Launch UltraSearch" />
+      </Component>
+
+      <!-- Service Component -->
+      <Component Id="cmp_service_exe" Guid="*">
+        <File Id="fil_service_exe" Source="target\release\service.exe" KeyPath="yes" />
+        
+        <ServiceInstall
+            Id="ServiceInstaller"
+            Type="ownProcess"
+            Name="UltraSearchService"
+            DisplayName="UltraSearch Indexing Service"
+            Description="Provides high-performance file indexing for UltraSearch."
+            Start="auto"
+            Account="LocalSystem"
+            ErrorControl="normal"
+            Vital="yes" />
+            
+        <ServiceControl 
+            Id="StartService" 
+            Start="install" 
+            Stop="both" 
+            Remove="uninstall" 
+            Name="UltraSearchService" 
+            Wait="yes" />
+      </Component>
+
+      <!-- Protocol Handler Component -->
+      <Component Id="cmp_protocol_handler" Guid="*">
+        <RegistryKey Root="HKCR" Key="ultrasearch">
+            <RegistryValue Type="string" Value="URL:UltraSearch Protocol" KeyPath="yes" />
+            <RegistryValue Type="string" Name="URL Protocol" Value="" />
+            <RegistryKey Key="shell\open\command">
+                <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]ui.exe&quot; &quot;%1&quot;" />
+            </RegistryKey>
+            <RegistryKey Key="DefaultIcon">
+                <RegistryValue Type="string" Value="[INSTALLFOLDER]ui.exe,0" />
+            </RegistryKey>
+        </RegistryKey>
+      </Component>
+    </DirectoryRef>
+
+    <!-- Features -->
+    <Feature Id="MainFeature" Title="UltraSearch" Level="1">
+      <ComponentRef Id="cmp_ui_exe" />
+      <ComponentRef Id="cmp_launcher_exe" />
+      <ComponentRef Id="cmp_service_exe" />
+      <ComponentRef Id="cmp_protocol_handler" />
+    </Feature>
+
+    <!-- ARP metadata -->
+    <Property Id="ARPHELPLINK" Value="https://github.com/Dicklesworthstone/ultrasearch/issues" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Dicklesworthstone/ultrasearch" />
+    <Property Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" />
+
+  </Product>
+</Wix>

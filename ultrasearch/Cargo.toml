@@ -1,4 +1,7 @@
-[workspace]
-# Workspace is defined at repository root (../Cargo.toml). This file exists to
-# avoid nested workspace confusion; do not add members here.
-members = []
+[package.metadata.wix]
+upgrade-guid = "F5B2C1A2-5BC0-4C5D-93E4-0D6F9A6C9E11"
+path-to-wxs = "wix/main.wxs"
+description = "UltraSearch Desktop Search"
+license = "MIT"
+manufacturer = "Ultrasearch Team"
+binary-name = "launcher"
