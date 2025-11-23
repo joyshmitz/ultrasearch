@@ -3,8 +3,8 @@ use crate::meta_ingest::ingest_with_paths;
 use crate::scheduler_runtime::{content_job_from_meta, enqueue_content_job};
 use crate::status_provider::{update_status_last_commit, update_status_volumes};
 use anyhow::Result;
-use core_types::{DocKey, FileFlags, FileMeta};
 use core_types::config::AppConfig;
+use core_types::{DocKey, FileFlags, FileMeta};
 use ipc::VolumeStatus;
 use meta_index::{open_or_create_index, open_reader};
 use ntfs_watcher::{
@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tantivy::Document;
 use tokio::time::{Duration, interval};
 
 pub fn scan_volumes(cfg: &AppConfig) -> Result<Vec<JobSpec>> {
@@ -258,7 +259,7 @@ fn events_to_jobs(events: &[FileEvent], cfg: &AppConfig) -> Vec<JobSpec> {
 /// Polling-based fallback: walk the metadata index and enqueue files whose mtime increased.
 pub async fn watch_polling(cfg: AppConfig) -> Result<()> {
     tracing::info!("change watcher: starting polling fallback");
-    let mut last_seen: HashMap<DocKey, i64> = HashMap::new();
+    let mut last_seen: HashMap<core_types::DocKey, i64> = HashMap::new();
     let mut ticker = interval(Duration::from_secs(30));
 
     loop {
@@ -277,7 +278,7 @@ pub async fn watch_polling(cfg: AppConfig) -> Result<()> {
 
 fn detect_changed_files(
     cfg: &AppConfig,
-    last_seen: &mut HashMap<DocKey, i64>,
+    last_seen: &mut HashMap<core_types::DocKey, i64>,
 ) -> Result<Vec<JobSpec>> {
     let index_path = Path::new(&cfg.paths.meta_index);
     if !index_path.exists() {
@@ -293,8 +294,8 @@ fn detect_changed_files(
     for segment_reader in searcher.segment_readers() {
         let store = segment_reader.get_store_reader(1024)?;
         let alive = segment_reader.alive_bitset();
-        for stored_doc in store.iter(alive)? {
-            let stored_doc = stored_doc?;
+        for stored_doc in store.iter(alive.as_deref())? {
+            let stored_doc: Document = stored_doc?;
 
             let key_u64 = stored_doc
                 .get_first(meta.fields.doc_key)
@@ -311,7 +312,7 @@ fn detect_changed_files(
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
-            let path = match path {
+            let path: String = match path {
                 Some(p) => p,
                 None => continue,
             };
