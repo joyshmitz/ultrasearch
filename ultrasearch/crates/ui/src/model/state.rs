@@ -7,6 +7,32 @@ use ipc::{
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum UpdateStatus {
+    Idle,
+    Checking,
+    Available { version: String, notes: String },
+    NeedsOptIn,
+    Downloading { version: String, progress: u8 },
+    ReadyToRestart { version: String, notes: String },
+    Restarting,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateState {
+    pub opt_in: bool,
+    pub status: UpdateStatus,
+}
+
+impl Default for UpdateState {
+    fn default() -> Self {
+        Self {
+            opt_in: false,
+            status: UpdateStatus::Idle,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendMode {
     MetadataOnly,
@@ -62,6 +88,8 @@ pub struct SearchAppModel {
     pub selected_index: Option<usize>,
     pub page_size: usize,
     pub page: usize,
+    pub updates: UpdateState,
+    pub hotkey_conflict: Option<String>,
     pub client: IpcClient,
     pub search_debounce: Option<Task<()>>,
     pub status_task: Option<Task<()>>,
@@ -81,6 +109,8 @@ impl SearchAppModel {
             selected_index: None,
             page_size: 50,
             page: 0,
+            updates: UpdateState::default(),
+            hotkey_conflict: None,
             client,
             search_debounce: None,
             status_task: None,
@@ -91,6 +121,11 @@ impl SearchAppModel {
 
         model.start_status_polling(cx);
         model
+    }
+
+    pub fn set_hotkey_conflict(&mut self, reason: impl Into<String>, cx: &mut Context<Self>) {
+        self.hotkey_conflict = Some(reason.into());
+        cx.notify();
     }
 
     pub fn start_status_polling(&mut self, cx: &mut Context<SearchAppModel>) {
@@ -339,6 +374,115 @@ impl SearchAppModel {
         if let Some(sel) = self.selected_index {
             self.page = sel / self.page_size;
         }
+    }
+
+    pub fn set_update_opt_in(&mut self, opt_in: bool, cx: &mut Context<SearchAppModel>) {
+        self.updates.opt_in = opt_in;
+        cx.notify();
+    }
+
+    pub fn check_for_updates(&mut self, cx: &mut Context<SearchAppModel>) {
+        if !self.updates.opt_in {
+            self.updates.status = UpdateStatus::NeedsOptIn;
+            cx.notify();
+            return;
+        }
+        self.updates.status = UpdateStatus::Checking;
+        cx.notify();
+        let client = self.client.clone();
+        cx.spawn(|this: WeakEntity<SearchAppModel>, cx: &mut AsyncApp| {
+            let async_app = cx.clone();
+            async move {
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                let fake_version = "v0.2.0".to_string();
+                let fake_notes = "Performance improvements, UI polish, and bug fixes.".to_string();
+                let _ = async_app.update(|app| {
+                    this.update(app, |model, cx| {
+                        let _ = &client; // reserved for real check call
+                        model.updates.status = UpdateStatus::Available {
+                            version: fake_version.clone(),
+                            notes: fake_notes.clone(),
+                        };
+                        cx.notify();
+                    })
+                });
+            }
+        })
+        .detach();
+    }
+
+    pub fn start_update_download(&mut self, cx: &mut Context<SearchAppModel>) {
+        let version = match &self.updates.status {
+            UpdateStatus::Available { version, .. } => version.clone(),
+            _ => return,
+        };
+        self.updates.status = UpdateStatus::Downloading {
+            version: version.clone(),
+            progress: 0,
+        };
+        cx.notify();
+        cx.spawn(|this: WeakEntity<SearchAppModel>, cx: &mut AsyncApp| {
+            let async_app = cx.clone();
+            async move {
+                let mut progress = 0u8;
+                while progress < 100 {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    progress = progress.saturating_add(10);
+                    let _ = async_app.update(|app| {
+                        this.update(app, |model, cx| {
+                            if let UpdateStatus::Downloading { version, .. } = &model.updates.status
+                            {
+                                model.updates.status = UpdateStatus::Downloading {
+                                    version: version.clone(),
+                                    progress,
+                                };
+                                cx.notify();
+                            }
+                        })
+                    });
+                }
+                let _ = async_app.update(|app| {
+                    this.update(app, |model, cx| {
+                        let ver = match &model.updates.status {
+                            UpdateStatus::Downloading { version, .. } => version.clone(),
+                            UpdateStatus::Available { version, .. } => version.clone(),
+                            _ => "v0.2.0".into(),
+                        };
+                        let notes = match &model.updates.status {
+                            UpdateStatus::Available { notes, .. } => notes.clone(),
+                            _ => "Update downloaded".into(),
+                        };
+                        model.updates.status = UpdateStatus::ReadyToRestart {
+                            version: ver,
+                            notes,
+                        };
+                        cx.notify();
+                    })
+                });
+            }
+        })
+        .detach();
+    }
+
+    pub fn restart_to_update(&mut self, cx: &mut Context<SearchAppModel>) {
+        if !matches!(self.updates.status, UpdateStatus::ReadyToRestart { .. }) {
+            return;
+        }
+        self.updates.status = UpdateStatus::Restarting;
+        cx.notify();
+        cx.spawn(|this: WeakEntity<SearchAppModel>, cx: &mut AsyncApp| {
+            let async_app = cx.clone();
+            async move {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let _ = async_app.update(|app| {
+                    this.update(app, |model, cx| {
+                        model.updates.status = UpdateStatus::Idle;
+                        cx.notify();
+                    })
+                });
+            }
+        })
+        .detach();
     }
 }
 

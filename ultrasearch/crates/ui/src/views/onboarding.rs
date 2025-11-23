@@ -1,32 +1,45 @@
 use crate::actions::FinishOnboarding;
 use crate::model::state::SearchAppModel;
 use crate::theme;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use ipc;
+use std::path::PathBuf;
 use sysinfo::Disks;
 use uuid;
 
+#[derive(Clone)]
+struct DriveChoice {
+    name: String,
+    selected: bool,
+    content_indexing: bool,
+}
+
 pub struct OnboardingView {
     step: usize,
-    available_disks: Vec<(String, bool)>, // (Name/Mount, Selected)
+    drives: Vec<DriveChoice>,
+    privacy_opt_in: bool,
     focus_handle: FocusHandle,
     model: Entity<SearchAppModel>,
 }
 
 impl OnboardingView {
     pub fn new(model: Entity<SearchAppModel>, cx: &mut Context<Self>) -> Self {
-        let mut disks = Vec::new();
+        let mut drives = Vec::new();
         let sys_disks = Disks::new_with_refreshed_list();
         for disk in sys_disks.list() {
             let mount = disk.mount_point().to_string_lossy().to_string();
-            // Default to selecting Fixed disks
-            let selected = true;
-            disks.push((mount, selected));
+            drives.push(DriveChoice {
+                name: mount,
+                selected: true,
+                content_indexing: true,
+            });
         }
 
         Self {
             step: 0,
-            available_disks: disks,
+            drives,
+            privacy_opt_in: true,
             focus_handle: cx.focus_handle(),
             model,
         }
@@ -37,36 +50,56 @@ impl OnboardingView {
             self.step += 1;
             cx.notify();
         } else {
-            // Finish
             self.finish(cx);
         }
     }
 
-    fn toggle_disk(&mut self, index: usize, cx: &mut Context<Self>) {
-        if let Some(disk) = self.available_disks.get_mut(index) {
-            disk.1 = !disk.1;
+    fn prev_step(&mut self, cx: &mut Context<Self>) {
+        if self.step > 0 {
+            self.step -= 1;
+            cx.notify();
+        }
+    }
+
+    fn toggle_drive(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(drive) = self.drives.get_mut(index) {
+            drive.selected = !drive.selected;
+            cx.notify();
+        }
+    }
+
+    fn toggle_content(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(drive) = self.drives.get_mut(index) {
+            drive.content_indexing = !drive.content_indexing;
             cx.notify();
         }
     }
 
     fn finish(&mut self, cx: &mut Context<Self>) {
-        // 1. Update Config
         if let Ok(mut config) = core_types::config::load_or_create_config(None) {
-            config.volumes = self
-                .available_disks
+            let selected: Vec<_> = self
+                .drives
                 .iter()
-                .filter(|(_, selected)| *selected)
-                .map(|(name, _)| name.clone())
+                .filter(|d| d.selected)
+                .map(|d| d.name.clone())
+                .collect();
+            let content_enabled: Vec<_> = self
+                .drives
+                .iter()
+                .filter(|d| d.selected && d.content_indexing)
+                .map(|d| d.name.clone())
                 .collect();
 
-            // Save to file (default path)
-            let target = std::path::PathBuf::from("config/config.toml");
+            config.volumes = selected;
+            config.content_index_volumes = content_enabled;
+            config.app.telemetry_opt_in = self.privacy_opt_in;
+
+            let target = PathBuf::from("config/config.toml");
             if let Ok(toml) = toml::to_string_pretty(&config) {
                 let _ = std::fs::write(target, toml);
             }
         }
 
-        // 2. Send IPC Reload
         let client = self.model.read(cx).client.clone();
         cx.spawn(|_, _cx: &mut AsyncApp| async move {
             let req = ipc::ReloadConfigRequest {
@@ -78,53 +111,193 @@ impl OnboardingView {
 
         cx.dispatch_action(&FinishOnboarding);
     }
+
+    fn render_progress(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = theme::active_colors(cx);
+        div().flex().gap_2().children((0..3).map(|i| {
+            let active = i == self.step;
+            div().w(px(10.)).h(px(10.)).rounded_full().bg(if active {
+                colors.match_highlight
+            } else {
+                colors.divider
+            })
+        }))
+    }
+
+    fn render_drive_row(
+        &self,
+        index: usize,
+        drive: &DriveChoice,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let colors = theme::active_colors(cx);
+        let name_color = if drive.selected {
+            colors.text_primary
+        } else {
+            colors.text_secondary
+        };
+        let checkbox = |checked: bool| {
+            div()
+                .w(px(18.))
+                .h(px(18.))
+                .rounded_md()
+                .border_1()
+                .border_color(colors.border)
+                .bg(if checked {
+                    colors.match_highlight
+                } else {
+                    colors.panel_bg
+                })
+        };
+
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .p_2()
+            .rounded_md()
+            .hover(|s| s.bg(colors.divider))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(checkbox(drive.selected))
+                    .child(div().text_color(name_color).child(drive.name.clone())),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(colors.text_secondary)
+                            .child("Content"),
+                    )
+                    .child(div().w(px(32.)).h(px(18.)).rounded_full().bg(
+                        if drive.content_indexing {
+                            colors.match_highlight
+                        } else {
+                            colors.border
+                        },
+                    )),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.toggle_drive(index, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, cx| {
+                    this.toggle_content(index, cx);
+                }),
+            )
+    }
 }
 
 impl Render for OnboardingView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme::active_colors(cx);
 
-        let content = match self.step {
+        let body = match self.step {
             0 => div()
                 .flex()
                 .flex_col()
-                .gap_4()
-                .child(div().text_size(px(24.)).font_weight(FontWeight::BOLD).child("Welcome to UltraSearch"))
-                .child(div().child("UltraSearch needs to index your files to provide instant search results."))
-                .child(div().child("This process runs in the background and is resource-efficient.")),
-            1 => div()
-                .flex()
-                .flex_col()
-                .gap_4()
-                .child(div().text_size(px(18.)).font_weight(FontWeight::BOLD).child("Select Drives"))
-                .child(div().child("Which drives should UltraSearch index?"))
+                .gap_3()
+                .child(div().text_size(px(26.)).font_weight(FontWeight::BOLD).child("Welcome to UltraSearch"))
+                .child(div().text_size(px(14.)).text_color(colors.text_secondary).child(
+                    "UltraSearch provides instant filename search and deep content indexing, while staying light on resources.",
+                ))
                 .child(
                     div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .children(self.available_disks.iter().enumerate().map(|(i, (name, selected))| {
-                            let color = if *selected { colors.text_primary } else { colors.text_secondary };
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(div().child(if *selected { "[x]" } else { "[ ]" })) // Replace with checkbox widget later
-                                .child(div().text_color(color).child(name.clone()))
-                                .cursor_pointer()
-                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                    this.toggle_disk(i, cx);
-                                }))
-                        }))
+                        .text_size(px(13.))
+                        .text_color(colors.text_secondary)
+                        .child("We’ll guide you through a quick setup: choose drives, privacy, and start indexing."),
                 ),
+            1 => {
+                let drives = self
+                    .drives
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| self.render_drive_row(i, d, cx))
+                    .collect::<Vec<_>>();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(div().text_size(px(20.)).font_weight(FontWeight::BOLD).child("Choose what to index"))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(colors.text_secondary)
+                            .child("Left-click toggles drive inclusion; right-click toggles content indexing."),
+                    )
+                    .child(div().flex().flex_col().gap_2().children(drives))
+            }
             2 => div()
                 .flex()
                 .flex_col()
-                .gap_4()
-                .child(div().text_size(px(18.)).font_weight(FontWeight::BOLD).child("All Set!"))
-                .child(div().child("UltraSearch will now start indexing. You can start searching immediately, but results will improve as the index builds.")),
+                .gap_3()
+                .child(div().text_size(px(20.)).font_weight(FontWeight::BOLD).child("Privacy & Start"))
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(colors.text_secondary)
+                        .child("We only store index data locally. No telemetry is sent unless you opt in."),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .w(px(18.))
+                                .h(px(18.))
+                                .rounded_md()
+                                .border_1()
+                                .border_color(colors.border)
+                                .bg(if self.privacy_opt_in {
+                                    colors.match_highlight
+                                } else {
+                                    colors.panel_bg
+                                })
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                    this.privacy_opt_in = !this.privacy_opt_in;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .text_color(colors.text_primary)
+                                .child("Share anonymous diagnostics to improve UltraSearch (optional)"),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(colors.text_secondary)
+                        .child(
+                            "Click \u{201c}Start indexing\u{201d} to save your choices and begin the first scan.",
+                        ),
+                ),
             _ => div().child("Done"),
         };
+
+        let primary_label = match self.step {
+            0 => "Next",
+            1 => "Next",
+            2 => "Start indexing",
+            _ => "Next",
+        };
+
+        let can_go_back = self.step > 0;
 
         div()
             .track_focus(&self.focus_handle)
@@ -136,7 +309,7 @@ impl Render for OnboardingView {
             .justify_center()
             .child(
                 div()
-                    .w(px(500.))
+                    .w(px(640.))
                     .bg(colors.panel_bg)
                     .border_1()
                     .border_color(colors.border)
@@ -145,25 +318,48 @@ impl Render for OnboardingView {
                     .p_8()
                     .flex()
                     .flex_col()
-                    .gap_6()
-                    .child(content)
+                    .gap_5()
+                    .child(self.render_progress(cx))
+                    .child(body)
                     .child(
-                        div().flex().justify_end().child(
-                            div()
-                                .px_4()
-                                .py_2()
-                                .bg(colors.match_highlight)
-                                .rounded_md()
-                                .text_color(white())
-                                .cursor_pointer()
-                                .child(if self.step == 2 { "Finish" } else { "Next" })
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.next_step(cx);
-                                    }),
-                                ),
-                        ),
+                        div()
+                            .flex()
+                            .justify_between()
+                            .items_center()
+                            .gap_3()
+                            .child(div().when(can_go_back, |btn: Div| {
+                                btn.px_4()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .text_color(colors.text_primary)
+                                    .cursor_pointer()
+                                    .child("Back")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.prev_step(cx);
+                                        }),
+                                    )
+                            }))
+                            .child(
+                                div()
+                                    .px_5()
+                                    .py_2()
+                                    .rounded_md()
+                                    .bg(colors.match_highlight)
+                                    .text_color(colors.bg)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .child(primary_label)
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.next_step(cx);
+                                        }),
+                                    ),
+                            ),
                     ),
             )
     }

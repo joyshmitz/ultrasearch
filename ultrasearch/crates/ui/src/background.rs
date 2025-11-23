@@ -7,13 +7,17 @@ use muda::{Menu, MenuItem, PredefinedMenuItem};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
+use sysinfo::System;
 use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
 
 pub enum UserAction {
     Show,
     Quit,
     ToggleQuickSearch,
-    HotkeyConflict,
+    HotkeyConflict { powertoys: bool },
+    CheckUpdates,
+    RestartUpdate,
+    ToggleOptIn,
 }
 
 pub fn spawn() -> Result<Receiver<UserAction>> {
@@ -26,15 +30,24 @@ pub fn spawn() -> Result<Receiver<UserAction>> {
         let hotkey = HotKey::new(Some(Modifiers::ALT), Code::Space);
         if let Err(e) = hotkey_manager.register(hotkey) {
             eprintln!("Failed to register hotkey: {}", e);
-            let _ = tx.send(UserAction::HotkeyConflict);
+            let powertoys = detect_powertoys_run();
+            let _ = tx.send(UserAction::HotkeyConflict { powertoys });
         }
 
         // --- Tray ---
         // 1. Create Menu
         let menu = Menu::new();
         let show_item = MenuItem::new("Show UltraSearch", true, None);
+        let check_updates_item = MenuItem::new("Check for Updates", true, None);
+        let restart_item = MenuItem::new("Restart to Update", true, None);
         let quit_item = MenuItem::new("Quit", true, None);
-        let _ = menu.append_items(&[&show_item, &PredefinedMenuItem::separator(), &quit_item]);
+        let _ = menu.append_items(&[
+            &show_item,
+            &check_updates_item,
+            &restart_item,
+            &PredefinedMenuItem::separator(),
+            &quit_item,
+        ]);
 
         // 2. Create Icon
         let width = 32u32;
@@ -57,6 +70,8 @@ pub fn spawn() -> Result<Receiver<UserAction>> {
         // 4. Spawn Event Poller
         let tx_clone = tx.clone();
         let show_id = show_item.id().clone();
+        let check_id = check_updates_item.id().clone();
+        let restart_id = restart_item.id().clone();
         let quit_id = quit_item.id().clone();
         let hotkey_id = hotkey.id();
 
@@ -70,6 +85,10 @@ pub fn spawn() -> Result<Receiver<UserAction>> {
                 if let Ok(event) = menu_rx.try_recv() {
                     if event.id == show_id {
                         let _ = tx_clone.send(UserAction::Show);
+                    } else if event.id == check_id {
+                        let _ = tx_clone.send(UserAction::CheckUpdates);
+                    } else if event.id == restart_id {
+                        let _ = tx_clone.send(UserAction::RestartUpdate);
                     } else if event.id == quit_id {
                         let _ = tx_clone.send(UserAction::Quit);
                     }
@@ -112,4 +131,14 @@ pub fn spawn() -> Result<Receiver<UserAction>> {
     });
 
     Ok(rx)
+}
+
+fn detect_powertoys_run() -> bool {
+    let sys = System::new_all();
+    sys.processes().values().any(|p| {
+        p.name()
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .contains("powertoys")
+    })
 }

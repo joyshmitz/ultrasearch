@@ -17,6 +17,13 @@ actions!(
         QuitApp,
         FinishOnboarding,
         OpenContainingFolder,
-        ShowProperties
+        ShowProperties,
+        CloseStatus,
+        CheckForUpdates,
+        DownloadUpdate,
+        RestartToUpdate,
+        ToggleUpdateOptIn,
+        HotkeyConflictGeneral,
+        HotkeyConflictPowerToys
     ]
 );

@@ -1,4 +1,4 @@
-use crate::actions::ClearSearch;
+use crate::actions::{ClearSearch, OpenSelected, SelectNext, SelectPrev};
 use crate::model::state::SearchAppModel;
 use crate::theme;
 use crate::views::results_table::ResultsView;
@@ -38,14 +38,7 @@ impl Render for QuickBarView {
         div()
             .track_focus(&self.focus_handle)
             .size_full()
-            .bg(colors.panel_bg)
-            .border_1()
-            .border_color(colors.match_highlight)
-            .rounded_xl()
-            .shadow_2xl()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
+            .bg(hsla(0.0, 0.0, 0.0, 0.38))
             .key_context("QuickBar")
             .on_action(cx.listener(|_, _: &ClearSearch, window, _cx| {
                 window.remove_window();
@@ -53,7 +46,41 @@ impl Render for QuickBarView {
             .on_mouse_down_out(cx.listener(|_, _, window, _cx| {
                 window.remove_window();
             }))
-            .child(div().flex_shrink_0().child(self.search_view.clone()))
-            .child(div().flex_1().child(self.results_view.clone()))
+            .on_key_down(cx.listener(|_, event: &KeyDownEvent, window, cx| {
+                match event.keystroke.key.as_str() {
+                    "escape" => window.remove_window(),
+                    "arrowdown" => cx.dispatch_action(&SelectNext),
+                    "arrowup" => cx.dispatch_action(&SelectPrev),
+                    "enter" => {
+                        cx.dispatch_action(&OpenSelected);
+                        window.remove_window();
+                    }
+                    _ => {}
+                }
+            }))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w(px(900.))
+                    .bg(colors.panel_bg)
+                    .border_1()
+                    .border_color(colors.match_highlight)
+                    .rounded_xl()
+                    .shadow_2xl()
+                    .p_4()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(div().flex_shrink_0().child(self.search_view.clone()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .max_h(px(380.))
+                            .overflow_hidden()
+                            .child(self.results_view.clone()),
+                    ),
+            )
     }
 }

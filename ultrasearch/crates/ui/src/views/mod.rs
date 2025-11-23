@@ -4,3 +4,5 @@ pub mod preview_view;
 pub mod quick_search;
 pub mod results_table;
 pub mod search_view;
+pub mod status_view;
+pub mod update_panel;

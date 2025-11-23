@@ -2,6 +2,7 @@
 //!
 //! A high-performance Windows desktop search engine combining instant filename
 //! search with deep content indexing, wrapped in a beautiful native UI.
+// Background: UI layer powered by GPUI and custom models.
 
 use gpui::prelude::*;
 use gpui::{App, AppContext, AsyncApp, KeyBinding, *};
@@ -14,6 +15,7 @@ use ui::views::preview_view::PreviewView;
 use ui::views::quick_search::QuickBarView;
 use ui::views::results_table::ResultsView;
 use ui::views::search_view::SearchView;
+use ui::views::update_panel::UpdatePanel;
 
 use ui::actions::*;
 
@@ -24,6 +26,7 @@ struct UltraSearchWindow {
     results_view: Entity<ResultsView>,
     preview_view: Entity<PreviewView>,
     onboarding_view: Entity<OnboardingView>,
+    update_panel: Entity<UpdatePanel>,
     focus_handle: FocusHandle,
 }
 
@@ -40,6 +43,7 @@ impl UltraSearchWindow {
         let results_view = cx.new(|cx| ResultsView::new(model.clone(), cx));
         let preview_view = cx.new(|cx| PreviewView::new(model.clone(), cx));
         let onboarding_view = cx.new(|cx| OnboardingView::new(model.clone(), cx));
+        let update_panel = cx.new(|cx| UpdatePanel::new(model.clone(), cx));
 
         let focus_handle = cx.focus_handle();
 
@@ -49,8 +53,51 @@ impl UltraSearchWindow {
             results_view,
             preview_view,
             onboarding_view,
+            update_panel,
             focus_handle,
         }
+    }
+
+    fn on_check_updates(
+        &mut self,
+        _: &CheckForUpdates,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.model
+            .update(cx, |model, cx| model.check_for_updates(cx));
+    }
+
+    fn on_download_update(
+        &mut self,
+        _: &DownloadUpdate,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.model
+            .update(cx, |model, cx| model.start_update_download(cx));
+    }
+
+    fn on_restart_update(
+        &mut self,
+        _: &RestartToUpdate,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.model
+            .update(cx, |model, cx| model.restart_to_update(cx));
+    }
+
+    fn on_toggle_opt_in(
+        &mut self,
+        _: &ToggleUpdateOptIn,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.model.update(cx, |model, cx| {
+            let new_val = !model.updates.opt_in;
+            model.set_update_opt_in(new_val, cx);
+        });
     }
 
     fn on_focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
@@ -224,6 +271,34 @@ impl UltraSearchWindow {
         }
     }
 
+    fn on_hotkey_conflict_general(
+        &mut self,
+        _: &HotkeyConflictGeneral,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.model.update(cx, |model, cx| {
+            model.set_hotkey_conflict(
+                "Alt+Space could not be registered; another app is using it.",
+                cx,
+            );
+        });
+    }
+
+    fn on_hotkey_conflict_powertoys(
+        &mut self,
+        _: &HotkeyConflictPowerToys,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.model.update(cx, |model, cx| {
+            model.set_hotkey_conflict(
+                "Alt+Space is already bound by PowerToys Run. Disable or rebind it there to use UltraSearch.",
+                cx,
+            );
+        });
+    }
+
     fn open_selected(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(path) = self
             .model
@@ -250,7 +325,9 @@ impl UltraSearchWindow {
 impl Render for UltraSearchWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme::active_colors(cx);
-        let show_onboarding = self.model.read(cx).show_onboarding;
+        let read = self.model.read(cx);
+        let show_onboarding = read.show_onboarding;
+        let conflict = read.hotkey_conflict.clone();
 
         div()
             .track_focus(&self.focus_handle)
@@ -265,18 +342,28 @@ impl Render for UltraSearchWindow {
             .on_action(cx.listener(Self::on_mode_content))
             .on_action(cx.listener(Self::on_copy_selected_path))
             .on_action(cx.listener(Self::on_copy_selected_file))
+            .on_action(cx.listener(Self::on_check_updates))
+            .on_action(cx.listener(Self::on_download_update))
+            .on_action(cx.listener(Self::on_restart_update))
+            .on_action(cx.listener(Self::on_toggle_opt_in))
             .on_action(cx.listener(Self::on_quit))
             .on_action(cx.listener(Self::on_finish_onboarding))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_show_properties))
+            .on_action(cx.listener(Self::on_hotkey_conflict_general))
+            .on_action(cx.listener(Self::on_hotkey_conflict_powertoys))
             .size_full()
             .flex()
             .flex_col()
+            .relative()
             .bg(colors.bg)
             .text_color(colors.text_primary)
             .child(
                 // Search header - fixed at top
-                div().flex_shrink_0().child(self.search_view.clone()),
+                div()
+                    .flex_shrink_0()
+                    .child(self.update_panel.clone())
+                    .child(self.search_view.clone()),
             )
             .child(
                 // Main content area - flexible height
@@ -313,6 +400,26 @@ impl Render for UltraSearchWindow {
                         .size_full()
                         .bg(hsla(0.0, 0.0, 0.0, 0.5)) // Dim background
                         .child(self.onboarding_view.clone()),
+                )
+            })
+            .when(conflict.is_some(), |this| {
+                let msg = conflict
+                    .clone()
+                    .unwrap_or_else(|| "Alt+Space is in use by another app.".into());
+                this.child(
+                    div()
+                        .absolute()
+                        .top(px(14.))
+                        .right(px(14.))
+                        .bg(colors.panel_bg)
+                        .border_1()
+                        .border_color(colors.match_highlight)
+                        .rounded_md()
+                        .shadow_lg()
+                        .p_3()
+                        .text_size(px(12.))
+                        .text_color(colors.text_primary)
+                        .child(msg),
                 )
             })
     }
@@ -431,12 +538,12 @@ fn main() {
                                                         window_bounds: Some(
                                                             WindowBounds::Windowed(Bounds {
                                                                 origin: Point {
-                                                                    x: px(400.0),
-                                                                    y: px(200.0),
+                                                                    x: px(120.0),
+                                                                    y: px(60.0),
                                                                 },
                                                                 size: Size {
-                                                                    width: px(800.0),
-                                                                    height: px(60.0),
+                                                                    width: px(1500.0),
+                                                                    height: px(900.0),
                                                                 },
                                                             }),
                                                         ),
@@ -459,10 +566,29 @@ fn main() {
                                         }
                                     });
                                 }
-                                ui::background::UserAction::HotkeyConflict => {
-                                    eprintln!("⚠️ Hotkey conflict detected for Alt+Space!");
-                                    // In a real app, show a toast or modal dialog here.
-                                    // For now, we log to console.
+                                ui::background::UserAction::CheckUpdates => {
+                                    let _ = cx.update(|cx: &mut App| {
+                                        cx.dispatch_action(&CheckForUpdates)
+                                    });
+                                }
+                                ui::background::UserAction::RestartUpdate => {
+                                    let _ = cx.update(|cx: &mut App| {
+                                        cx.dispatch_action(&RestartToUpdate)
+                                    });
+                                }
+                                ui::background::UserAction::ToggleOptIn => {
+                                    let _ = cx.update(|cx: &mut App| {
+                                        cx.dispatch_action(&ToggleUpdateOptIn)
+                                    });
+                                }
+                                ui::background::UserAction::HotkeyConflict { powertoys } => {
+                                    let _ = cx.update(|cx: &mut App| {
+                                        if powertoys {
+                                            cx.dispatch_action(&HotkeyConflictPowerToys)
+                                        } else {
+                                            cx.dispatch_action(&HotkeyConflictGeneral)
+                                        }
+                                    });
                                 }
                             }
                         }
