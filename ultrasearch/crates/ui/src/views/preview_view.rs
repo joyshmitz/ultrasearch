@@ -1,32 +1,8 @@
 use crate::model::state::SearchAppModel;
+use crate::theme;
 use gpui::prelude::*;
 use gpui::{InteractiveElement, UniformListScrollHandle, *};
 use std::process::Command;
-
-fn preview_bg() -> Hsla {
-    hsla(0.0, 0.0, 0.102, 1.0)
-}
-fn preview_border() -> Hsla {
-    hsla(0.0, 0.0, 0.2, 1.0)
-}
-fn text_primary() -> Hsla {
-    hsla(0.0, 0.0, 0.894, 1.0)
-}
-fn text_secondary() -> Hsla {
-    hsla(0.0, 0.0, 0.616, 1.0)
-}
-fn text_dim() -> Hsla {
-    hsla(0.0, 0.0, 0.416, 1.0)
-}
-fn accent_blue() -> Hsla {
-    hsla(207.0, 1.0, 0.416, 1.0)
-}
-fn snippet_bg() -> Hsla {
-    hsla(0.0, 0.0, 0.157, 1.0)
-}
-fn snippet_border() -> Hsla {
-    hsla(0.0, 0.0, 0.243, 1.0)
-}
 
 pub struct PreviewView {
     model: Entity<SearchAppModel>,
@@ -145,13 +121,14 @@ impl PreviewView {
         on_click: impl Fn(&mut Self, &MouseDownEvent, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let colors = theme::active_colors(cx);
         let base = div()
             .flex()
             .items_center()
             .gap_2()
             .px_4()
             .py_2p5()
-            .bg(accent_blue())
+            .bg(colors.match_highlight)
             .rounded_lg()
             .text_color(white())
             .font_weight(FontWeight::MEDIUM)
@@ -162,14 +139,15 @@ impl PreviewView {
 
         if enabled {
             base.cursor_pointer()
-                .hover(|style| style.bg(hsla(207.0, 0.897, 0.556, 1.0)))
+                .hover(|style| style.bg(colors.selection_bg))
                 .on_mouse_down(MouseButton::Left, cx.listener(on_click))
         } else {
             base.opacity(0.5).cursor(CursorStyle::Arrow)
         }
     }
 
-    fn render_info_row(&self, label: &str, value: String, icon: &'static str) -> impl IntoElement {
+    fn render_info_row(&self, label: &str, value: String, icon: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = theme::active_colors(cx);
         div()
             .flex()
             .items_center()
@@ -177,7 +155,7 @@ impl PreviewView {
             .px_4()
             .py_3()
             .rounded_lg()
-            .bg(hsla(0.0, 0.0, 0.141, 1.0))
+            .bg(colors.panel_bg)
             .child(div().text_size(px(18.)).child(icon))
             .child(
                 div()
@@ -187,14 +165,14 @@ impl PreviewView {
                     .child(
                         div()
                             .text_size(px(11.))
-                            .text_color(text_dim())
+                            .text_color(colors.text_secondary)
                             .child(label.to_uppercase()),
                     )
                     .child(
                         div()
                             .text_size(px(14.))
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(text_primary())
+                            .text_color(colors.text_primary)
                             .child(value),
                     ),
             )
@@ -204,6 +182,7 @@ impl PreviewView {
 impl Render for PreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.model.read(cx).selected_row().cloned();
+        let colors = theme::active_colors(cx);
 
         let content = if let Some(hit) = selected {
             let name = hit.name.as_deref().unwrap_or("<unknown>").to_string();
@@ -232,18 +211,18 @@ impl Render for PreviewView {
                         .gap_4()
                         .p_6()
                         .border_b_1()
-                        .border_color(preview_border())
+                        .border_color(colors.divider)
                         .child(
                             div()
                                 .text_size(px(20.))
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(text_primary())
+                                .text_color(colors.text_primary)
                                 .child(name.clone()),
                         )
                         .child(
                             div()
                                 .text_size(px(12.))
-                                .text_color(text_secondary())
+                                .text_color(colors.text_secondary)
                                 .child(path.clone()),
                         )
                         .child(
@@ -285,14 +264,14 @@ impl Render for PreviewView {
                             div()
                                 .text_size(px(13.))
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(text_dim())
+                                .text_color(colors.text_secondary)
                                 .mb_3()
                                 .child("FILE DETAILS"),
                         )
-                        .child(self.render_info_row("Size", size_text, "📐"))
-                        .child(self.render_info_row("Modified", modified_text, "⏱"))
-                        .child(self.render_info_row("Extension", ext.to_uppercase(), "📎"))
-                        .child(self.render_info_row("Match Score", score, "⭐")),
+                        .child(self.render_info_row("Size", size_text, "📐", cx))
+                        .child(self.render_info_row("Modified", modified_text, "⏱", cx))
+                        .child(self.render_info_row("Extension", ext.to_uppercase(), "📎", cx))
+                        .child(self.render_info_row("Match Score", score, "⭐", cx)),
                 );
 
             if let Some(snippet) = hit.snippet.clone() {
@@ -303,21 +282,21 @@ impl Render for PreviewView {
                         .gap_3()
                         .p_6()
                         .border_t_1()
-                        .border_color(preview_border())
+                        .border_color(colors.divider)
                         .child(
                             div()
                                 .text_size(px(13.))
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(text_dim())
+                                .text_color(colors.text_secondary)
                                 .mb_2()
                                 .child("CONTENT PREVIEW"),
                         )
                         .child(
                             div()
                                 .p_4()
-                                .bg(snippet_bg())
+                                .bg(colors.panel_bg)
                                 .border_1()
-                                .border_color(snippet_border())
+                                .border_color(colors.border)
                                 .rounded_lg()
                                 .max_h(px(260.))
                                 .child({
@@ -339,7 +318,7 @@ impl Render for PreviewView {
                                                     .px_1()
                                                     .py_0p5()
                                                     .text_size(px(12.))
-                                                    .text_color(text_secondary())
+                                                    .text_color(colors.text_secondary)
                                                     .whitespace_nowrap()
                                                     .text_ellipsis()
                                                     .child(line.clone())
@@ -367,22 +346,22 @@ impl Render for PreviewView {
                     div()
                         .text_size(px(16.))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(text_secondary())
+                        .text_color(colors.text_secondary)
                         .child("No file selected"),
                 )
                 .child(
                     div()
                         .text_size(px(13.))
-                        .text_color(text_dim())
+                        .text_color(colors.text_secondary)
                         .child("Select a file from the results to see details and preview"),
                 )
         };
 
         div()
             .size_full()
-            .bg(preview_bg())
+            .bg(colors.bg)
             .border_l_1()
-            .border_color(preview_border())
+            .border_color(colors.divider)
             .child(content)
     }
 }

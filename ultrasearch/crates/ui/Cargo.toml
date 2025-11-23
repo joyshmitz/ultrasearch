@@ -16,6 +16,20 @@ serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 futures = "0.3"
 uuid = { workspace = true }
+tray-icon = "0.19"
+muda = "0.15"
+image = "0.25"
+global-hotkey = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Controls",
+] }
 
 [package.metadata.wix]
 upgrade-guid = "F5B2C1A2-5BC0-4C5D-93E4-0D6F9A6C9E11"

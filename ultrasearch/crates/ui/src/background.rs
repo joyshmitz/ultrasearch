@@ -1,0 +1,107 @@
+use anyhow::Result;
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::{Code, HotKey, Modifiers}};
+use muda::{Menu, MenuItem, PredefinedMenuItem};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::time::Duration;
+use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
+
+pub enum UserAction {
+    Show,
+    Quit,
+    ToggleQuickSearch,
+}
+
+pub fn spawn() -> Result<Receiver<UserAction>> {
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        // --- Hotkeys ---
+        let hotkey_manager = GlobalHotKeyManager::new().unwrap();
+        // Alt + Space
+        let hotkey = HotKey::new(Some(Modifiers::ALT), Code::Space);
+        let _ = hotkey_manager.register(hotkey);
+
+        // --- Tray ---
+        // 1. Create Menu
+        let menu = Menu::new();
+        let show_item = MenuItem::new("Show UltraSearch", true, None);
+        let quit_item = MenuItem::new("Quit", true, None);
+        let _ = menu.append_items(&[&show_item, &PredefinedMenuItem::separator(), &quit_item]);
+
+        // 2. Create Icon
+        let width = 32u32;
+        let height = 32u32;
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for _ in 0..(width * height) {
+            // Blue-ish
+            rgba.extend_from_slice(&[0, 120, 255, 255]);
+        }
+        let icon = Icon::from_rgba(rgba, width, height).unwrap();
+
+        // 3. Create Tray Icon
+        let _tray_icon = TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_tooltip("UltraSearch")
+            .with_icon(icon)
+            .build()
+            .unwrap();
+
+        // 4. Spawn Event Poller
+        let tx_clone = tx.clone();
+        let show_id = show_item.id().clone();
+        let quit_id = quit_item.id().clone();
+        let hotkey_id = hotkey.id(); 
+
+        thread::spawn(move || {
+            let menu_rx = muda::MenuEvent::receiver();
+            let tray_rx = TrayIconEvent::receiver();
+            let hotkey_rx = GlobalHotKeyEvent::receiver();
+
+            loop {
+                // Menu
+                if let Ok(event) = menu_rx.try_recv() {
+                    if event.id == show_id {
+                        let _ = tx_clone.send(UserAction::Show);
+                    } else if event.id == quit_id {
+                        let _ = tx_clone.send(UserAction::Quit);
+                    }
+                }
+
+                // Tray
+                if let Ok(_event) = tray_rx.try_recv() {
+                    let _ = tx_clone.send(UserAction::Show);
+                }
+                
+                // Hotkey
+                if let Ok(event) = hotkey_rx.try_recv() {
+                    if event.id == hotkey_id && event.state == global_hotkey::HotKeyState::Released {
+                         let _ = tx_clone.send(UserAction::ToggleQuickSearch);
+                    }
+                }
+
+                thread::sleep(Duration::from_millis(50));
+            }
+        });
+
+        // 5. Run Platform Message Loop (Windows)
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                DispatchMessageW, GetMessageW, TranslateMessage, MSG,
+            };
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        
+        #[cfg(not(target_os = "windows"))]
+        loop {
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+
+    Ok(rx)
+}

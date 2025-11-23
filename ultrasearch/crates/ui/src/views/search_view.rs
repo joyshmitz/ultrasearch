@@ -1,40 +1,7 @@
 use crate::model::state::{BackendMode, SearchAppModel};
+use crate::theme;
 use gpui::prelude::*;
 use gpui::{InteractiveElement, *};
-
-fn search_bg() -> Hsla {
-    hsla(0.0, 0.0, 0.102, 1.0)
-}
-fn search_border() -> Hsla {
-    hsla(0.0, 0.0, 0.243, 1.0)
-}
-fn input_bg() -> Hsla {
-    hsla(0.0, 0.0, 0.176, 1.0)
-}
-fn input_bg_focus() -> Hsla {
-    hsla(0.0, 0.0, 0.208, 1.0)
-}
-fn input_border_focus() -> Hsla {
-    hsla(207.0, 1.0, 0.404, 1.0)
-}
-fn text_primary() -> Hsla {
-    hsla(0.0, 0.0, 0.894, 1.0)
-}
-fn text_secondary() -> Hsla {
-    hsla(0.0, 0.0, 0.616, 1.0)
-}
-fn text_placeholder() -> Hsla {
-    hsla(0.0, 0.0, 0.416, 1.0)
-}
-fn accent_blue() -> Hsla {
-    hsla(207.0, 1.0, 0.416, 1.0)
-}
-fn status_success() -> Hsla {
-    hsla(146.0, 0.444, 0.502, 1.0)
-}
-fn status_error() -> Hsla {
-    hsla(0.0, 0.903, 0.661, 1.0)
-}
 
 pub struct SearchView {
     model: Entity<SearchAppModel>,
@@ -268,6 +235,7 @@ impl SearchView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_active = mode == current;
+        let colors = theme::active_colors(cx);
 
         div()
             .flex()
@@ -279,14 +247,14 @@ impl SearchView {
             .tab_stop(true)
             .tab_index(0)
             .when(is_active, |this| {
-                this.bg(accent_blue()).text_color(white()).shadow_sm()
+                this.bg(colors.selection_bg).text_color(colors.text_primary).shadow_sm()
             })
             .when(!is_active, |this| {
-                this.bg(input_bg())
-                    .text_color(text_secondary())
-                    .hover(|style| style.bg(input_bg_focus()).text_color(text_primary()))
+                this.bg(colors.panel_bg)
+                    .text_color(colors.text_secondary)
+                    .hover(|style| style.bg(colors.bg).text_color(colors.text_primary))
             })
-            .focus_visible(|style| style.border_1().border_color(input_border_focus()))
+            .focus_visible(|style| style.border_1().border_color(colors.match_highlight))
             .cursor_pointer()
             .child(div().text_size(px(14.)).child(icon))
             .child(
@@ -307,6 +275,8 @@ impl Render for SearchView {
         let model = self.model.read(cx);
         let status = model.status.clone();
         let query = model.query.clone();
+        let colors = theme::active_colors(cx);
+
         // Keep local text in sync if model was changed externally.
         if query != self.input_text {
             self.input_text = query.clone().into();
@@ -322,9 +292,9 @@ impl Render for SearchView {
             .flex()
             .flex_col()
             .w_full()
-            .bg(search_bg())
+            .bg(colors.bg)
             .border_b_1()
-            .border_color(search_border())
+            .border_color(colors.border)
             .shadow_sm()
             .child(
                 // Search input area with modern styling
@@ -339,7 +309,7 @@ impl Render for SearchView {
                         // Search icon
                         div()
                             .text_size(px(20.))
-                            .text_color(text_secondary())
+                            .text_color(colors.text_secondary)
                             .child("🔎"),
                     )
                     .child(
@@ -350,19 +320,19 @@ impl Render for SearchView {
                             .tab_index(0)
                             .px_3()
                             .py_2p5()
-                            .bg(input_bg())
+                            .bg(colors.panel_bg)
                             .border_1()
-                            .border_color(search_border())
+                            .border_color(colors.border)
                             .rounded_lg()
-                            .text_color(text_primary())
+                            .text_color(colors.text_primary)
                             .text_size(px(15.))
                             .focus(|style| {
                                 style
-                                    .border_color(input_border_focus())
-                                    .bg(input_bg_focus())
+                                    .border_color(colors.match_highlight)
+                                    .bg(colors.bg)
                             })
                             .focus_visible(|style| {
-                                style.border_color(input_border_focus()).shadow_md()
+                                style.border_color(colors.match_highlight).shadow_md()
                             })
                             .cursor(CursorStyle::IBeam)
                             .on_mouse_down(
@@ -453,7 +423,7 @@ impl Render for SearchView {
                             .child({
                                 if self.input_text.is_empty() {
                                     div()
-                                        .text_color(text_placeholder())
+                                        .text_color(colors.text_secondary)
                                         .child("Search files by name or content...")
                                 } else {
                                     let text = self.input_text.to_string();
@@ -463,7 +433,7 @@ impl Render for SearchView {
                                     let sel_str =
                                         SharedString::from(text[sel_start..sel_end].to_string());
                                     let tail = SharedString::from(text[sel_end..].to_string());
-                                    let caret = div().w(px(1.5)).h(px(18.)).bg(text_primary());
+                                    let caret = div().w(px(1.5)).h(px(18.)).bg(colors.text_primary);
                                     div()
                                         .flex()
                                         .items_center()
@@ -471,8 +441,8 @@ impl Render for SearchView {
                                         .when(sel_start != sel_end, |d| {
                                             d.child(
                                                 div()
-                                                    .bg(hsla(207.0, 1.0, 0.416, 0.2))
-                                                    .text_color(text_primary())
+                                                    .bg(colors.selection_bg)
+                                                    .text_color(colors.text_primary)
                                                     .child(sel_str.clone()),
                                             )
                                         })
@@ -490,12 +460,12 @@ impl Render for SearchView {
                                 .rounded_md()
                                 .tab_stop(true)
                                 .tab_index(0)
-                                .text_color(text_secondary())
+                                .text_color(colors.text_secondary)
                                 .hover(|style| {
-                                    style.bg(input_bg_focus()).text_color(text_primary())
+                                    style.bg(colors.panel_bg).text_color(colors.text_primary)
                                 })
                                 .focus_visible(|style| {
-                                    style.border_1().border_color(input_border_focus())
+                                    style.border_1().border_color(colors.match_highlight)
                                 })
                                 .cursor_pointer()
                                 .child("✕")
@@ -542,7 +512,7 @@ impl Render for SearchView {
                     .justify_between()
                     .px_4()
                     .py_2()
-                    .bg(hsla(0.0, 0.0, 0.141, 1.0))
+                    .bg(colors.panel_bg)
                     .child(
                         div()
                             .flex()
@@ -551,7 +521,7 @@ impl Render for SearchView {
                             .text_size(px(12.))
                             .child(
                                 div()
-                                    .text_color(text_secondary())
+                                    .text_color(colors.text_secondary)
                                     .child(if status.in_flight { "⏳" } else { "" }),
                             )
                             .child(
@@ -559,31 +529,31 @@ impl Render for SearchView {
                                     .flex()
                                     .items_center()
                                     .gap_1p5()
-                                    .child(div().text_color(text_secondary()).child(format!(
+                                    .child(div().text_color(colors.text_secondary).child(format!(
                                         "{} results",
                                         Self::format_number(status.total)
                                     )))
                                     .when(status.shown < status.total as usize, |this| {
                                         this.child(
                                             div()
-                                                .text_color(text_placeholder())
+                                                .text_color(colors.text_secondary)
                                                 .child(format!("(showing {})", status.shown)),
                                         )
                                     }),
                             )
                             .when(status.last_latency_ms.is_some(), |this| {
-                                this.child(div().text_color(search_border()).child("⏱"))
+                                this.child(div().text_color(colors.border).child("⏱"))
                                     .child(
-                                        div().text_color(text_secondary()).child(format!(
+                                        div().text_color(colors.text_secondary).child(format!(
                                             "{} ms",
                                             status.last_latency_ms.unwrap()
                                         )),
                                     )
                             })
-                            .child(div().text_color(search_border()).child("•"))
+                            .child(div().text_color(colors.border).child("•"))
                             .child(
                                 div()
-                                    .text_color(text_secondary())
+                                    .text_color(colors.text_secondary)
                                     .child(status.indexing_state.clone()),
                             ),
                     )
@@ -595,9 +565,9 @@ impl Render for SearchView {
                             .gap_2()
                             .child(div().w(px(8.)).h(px(8.)).rounded_full().bg(
                                 if status.connected {
-                                    status_success()
+                                    hsla(146.0, 0.444, 0.502, 1.0) // Green
                                 } else {
-                                    status_error()
+                                    hsla(0.0, 0.903, 0.661, 1.0) // Red
                                 },
                             ))
                             .child(
@@ -605,9 +575,9 @@ impl Render for SearchView {
                                     .text_size(px(12.))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(if status.connected {
-                                        status_success()
+                                        hsla(146.0, 0.444, 0.502, 1.0)
                                     } else {
-                                        status_error()
+                                        hsla(0.0, 0.903, 0.661, 1.0)
                                     })
                                     .child(if status.connected {
                                         "Connected"
@@ -623,12 +593,12 @@ impl Render for SearchView {
                                 .px_2()
                                 .py_1()
                                 .rounded_md()
-                                .bg(status_error())
+                                .bg(hsla(0.0, 0.903, 0.661, 1.0))
                                 .text_color(white())
                                 .text_size(px(11.))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(hsla(0.0, 0.903, 0.7, 1.0)))
-                                .focus_visible(|s| s.border_1().border_color(input_border_focus()))
+                                .focus_visible(|s| s.border_1().border_color(colors.match_highlight))
                                 .tab_stop(true)
                                 .tab_index(0)
                                 .child("Retry")

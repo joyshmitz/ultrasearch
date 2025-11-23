@@ -1,4 +1,5 @@
 use crate::model::state::SearchAppModel;
+use crate::theme;
 use gpui::prelude::*;
 use gpui::{InteractiveElement, *};
 use ipc::SearchHit;
@@ -7,33 +8,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn row_height() -> Pixels {
     px(48.)
-}
-fn table_bg() -> Hsla {
-    hsla(0.0, 0.0, 0.118, 1.0)
-}
-fn row_even() -> Hsla {
-    hsla(0.0, 0.0, 0.118, 1.0)
-}
-fn row_odd() -> Hsla {
-    hsla(0.0, 0.0, 0.141, 1.0)
-}
-fn row_selected() -> Hsla {
-    hsla(210.0, 0.274, 0.243, 1.0)
-}
-fn row_hover() -> Hsla {
-    hsla(0.0, 0.0, 0.165, 1.0)
-}
-fn text_primary() -> Hsla {
-    hsla(0.0, 0.0, 0.894, 1.0)
-}
-fn text_secondary() -> Hsla {
-    hsla(0.0, 0.0, 0.616, 1.0)
-}
-fn text_dim() -> Hsla {
-    hsla(0.0, 0.0, 0.416, 1.0)
-}
-fn border_color() -> Hsla {
-    hsla(0.0, 0.0, 0.2, 1.0)
 }
 
 pub struct ResultsView {
@@ -168,6 +142,7 @@ impl ResultsView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let is_even = index.is_multiple_of(2);
+        let colors = theme::active_colors(cx);
 
         let name = hit.name.clone().unwrap_or_else(|| "<unknown>".to_string());
         let path = hit.path.clone().unwrap_or_default();
@@ -190,20 +165,21 @@ impl ResultsView {
             .px_4()
             .gap_3()
             .bg(if is_selected {
-                row_selected()
+                colors.selection_bg
             } else if is_hover {
-                row_hover()
+                colors.panel_bg
             } else if is_even {
-                row_even()
+                colors.bg
             } else {
-                row_odd()
+                colors.bg // Or slightly different for striped rows if needed, using panel_bg makes it striped
             })
+            .when(!is_selected && !is_hover && !is_even, |this| this.bg(colors.panel_bg)) // Striping
             .border_b_1()
-            .border_color(border_color())
+            .border_color(colors.divider)
             .cursor_pointer()
             .tab_stop(true)
             .tab_index(0)
-            .focus_visible(|style| style.border_color(row_selected()).border_2())
+            .focus_visible(|style| style.border_color(colors.match_highlight).border_2())
             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                 if this.hover_index != Some(index) {
                     this.hover_index = Some(index);
@@ -233,7 +209,7 @@ impl ResultsView {
                         div()
                             .text_size(px(14.))
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(text_primary())
+                            .text_color(colors.text_primary)
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
@@ -242,7 +218,7 @@ impl ResultsView {
                     .child(
                         div()
                             .text_size(px(11.))
-                            .text_color(text_secondary())
+                            .text_color(colors.text_secondary)
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
@@ -256,10 +232,10 @@ impl ResultsView {
                         .px_2()
                         .py_0p5()
                         .rounded_md()
-                        .bg(hsla(0.0, 0.0, 0.2, 1.0))
+                        .bg(colors.panel_bg)
                         .text_size(px(10.))
                         .font_weight(FontWeight::BOLD)
-                        .text_color(text_dim())
+                        .text_color(colors.text_secondary)
                         .child(format!("{score_pct}%")),
                 );
                 this
@@ -269,7 +245,7 @@ impl ResultsView {
                 div()
                     .w(px(80.))
                     .text_size(px(12.))
-                    .text_color(text_secondary())
+                    .text_color(colors.text_secondary)
                     .child(size_text),
             )
             // Modified column
@@ -277,13 +253,14 @@ impl ResultsView {
                 div()
                     .w(px(100.))
                     .text_size(px(12.))
-                    .text_color(text_secondary())
+                    .text_color(colors.text_secondary)
                     .child(modified_text),
             )
             .into_any_element()
     }
 
-    fn render_header(&self) -> impl IntoElement {
+    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = theme::active_colors(cx);
         div()
             .w_full()
             .h(px(40.))
@@ -291,12 +268,12 @@ impl ResultsView {
             .items_center()
             .px_4()
             .gap_3()
-            .bg(hsla(0.0, 0.0, 0.141, 1.0))
+            .bg(colors.panel_bg)
             .border_b_1()
-            .border_color(border_color())
+            .border_color(colors.border)
             .text_size(px(11.))
             .font_weight(FontWeight::BOLD)
-            .text_color(text_dim())
+            .text_color(colors.text_secondary)
             .child(div().w(px(20.))) // Icon space
             .child(div().flex_1().child("NAME"))
             .child(div().w(px(80.)).child("SIZE"))
@@ -306,6 +283,7 @@ impl ResultsView {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.model.read(cx);
         let has_query = !model.query.is_empty();
+        let colors = theme::active_colors(cx);
 
         div()
             .size_full()
@@ -323,7 +301,7 @@ impl ResultsView {
                 div()
                     .text_size(px(16.))
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(text_secondary())
+                    .text_color(colors.text_secondary)
                     .child(if has_query {
                         "No results found"
                     } else {
@@ -334,7 +312,7 @@ impl ResultsView {
                 this.child(
                     div()
                         .text_size(px(13.))
-                        .text_color(text_dim())
+                        .text_color(colors.text_secondary)
                         .child("Try different search terms or search mode"),
                 )
             })
@@ -346,10 +324,11 @@ impl Render for ResultsView {
         let model = self.model.clone();
         let has_results = !model.read(cx).results.is_empty();
         let hover_index = self.hover_index;
+        let colors = theme::active_colors(cx);
 
         div()
             .size_full()
-            .bg(table_bg())
+            .bg(colors.bg)
             .flex()
             .flex_col()
             .on_mouse_move(cx.listener(|this, _, _, cx| {
@@ -365,7 +344,7 @@ impl Render for ResultsView {
                 }
             }))
             .when(has_results, |this: Div| {
-                this.child(self.render_header()).child(
+                this.child(self.render_header(cx)).child(
                     list(
                         self.list_state.clone(),
                         cx.processor(move |this, ix, _window, cx| {

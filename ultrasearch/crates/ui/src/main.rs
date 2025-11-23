@@ -4,9 +4,12 @@
 //! search with deep content indexing, wrapped in a beautiful native UI.
 
 use gpui::prelude::*;
-use gpui::{actions, KeyBinding, *};
+use gpui::{actions, App, AppContext, AsyncApp, KeyBinding, *};
+use ui::icon_cache::IconCache;
 use ui::model::state::{BackendMode, SearchAppModel};
+use ui::theme::{self, Theme};
 use ui::views::preview_view::PreviewView;
+use ui::views::quick_search::QuickBarView;
 use ui::views::results_table::ResultsView;
 use ui::views::search_view::SearchView;
 
@@ -26,16 +29,6 @@ actions!(
         QuitApp
     ]
 );
-
-fn app_bg() -> Hsla {
-    hsla(0.0, 0.0, 0.102, 1.0)
-}
-fn divider_color() -> Hsla {
-    hsla(0.0, 0.0, 0.2, 1.0)
-}
-fn text_primary() -> Hsla {
-    hsla(0.0, 0.0, 0.894, 1.0)
-}
 
 /// Main application window containing all UI components
 struct UltraSearchWindow {
@@ -162,6 +155,8 @@ impl UltraSearchWindow {
 
 impl Render for UltraSearchWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = theme::active_colors(cx);
+
         div()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_focus_search))
@@ -178,8 +173,8 @@ impl Render for UltraSearchWindow {
             .size_full()
             .flex()
             .flex_col()
-            .bg(app_bg())
-            .text_color(text_primary())
+            .bg(colors.bg)
+            .text_color(colors.text_primary)
             .child(
                 // Search header - fixed at top
                 div().flex_shrink_0().child(self.search_view.clone()),
@@ -197,7 +192,7 @@ impl Render for UltraSearchWindow {
                             .flex_grow()
                             .overflow_hidden()
                             .border_r_1()
-                            .border_color(divider_color())
+                            .border_color(colors.divider)
                             .child(self.results_view.clone()),
                     )
                     .child(
@@ -211,6 +206,13 @@ impl Render for UltraSearchWindow {
             )
     }
 }
+
+struct GlobalAppState {
+    quick_bar: Option<WindowHandle<QuickBarView>>,
+    icon_cache: Model<IconCache>,
+}
+
+impl Global for GlobalAppState {}
 
 fn main() {
     // Provide a Tokio runtime so async tasks in the UI (status/search polling) have a reactor.
@@ -226,8 +228,119 @@ fn main() {
         eprintln!("Continuing with default configuration...");
     }
 
+    // Start Background Tasks (Tray + Hotkeys)
+    let bg_rx = match ui::background::spawn() {
+        Ok(rx) => Some(rx),
+        Err(e) => {
+            eprintln!("Failed to spawn background tasks: {}", e);
+            None
+        }
+    };
+
     // Initialize GPUI application
-    Application::new().run(|cx: &mut App| {
+    Application::new().run(move |cx: &mut App| {
+        // Initialize Theme
+        cx.set_global(Theme::detect());
+
+        // Theme Polling Task
+        cx.spawn(|cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let mut last_theme = Theme::detect();
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(2))
+                        .await;
+                    
+                    let current = Theme::detect();
+                    if current != last_theme {
+                        last_theme = current;
+                        let _ = cx.update(|cx: &mut App| {
+                            cx.set_global(current);
+                            cx.refresh(); // Force redraw
+                        });
+                    }
+                }
+            }
+        }).detach();
+
+        // Initialize Icon Cache
+        let icon_cache = cx.new_model(|cx| IconCache::new(cx));
+        cx.set_global(GlobalAppState { 
+            quick_bar: None,
+            icon_cache 
+        });
+
+        // Handle Background Events
+        if let Some(rx) = bg_rx {
+            cx.spawn(|cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    loop {
+                        if let Ok(action) = rx.try_recv() {
+                            match action {
+                                ui::background::UserAction::Show => {
+                                    // Activate app (bring to front)
+                                    let _ = cx.update(|cx: &mut App| cx.activate(true));
+                                }
+                                ui::background::UserAction::Quit => {
+                                    // Quit app
+                                    let _ = cx.update(|cx: &mut App| cx.quit());
+                                    break;
+                                }
+                                ui::background::UserAction::ToggleQuickSearch => {
+                                    // Toggle Quick Search Window
+                                    let _ = cx.update(|cx: &mut App| {
+                                        let mut global_state = cx.global::<GlobalAppState>().quick_bar.clone();
+                                        
+                                        if let Some(handle) = global_state.as_ref() {
+                                            if handle.update(cx, |view, window, _| window.focus(&view.focus_handle())).is_ok() {
+                                                // Window exists and activated
+                                                return;
+                                            } else {
+                                                // Window dropped/closed
+                                                global_state = None;
+                                            }
+                                        }
+
+                                        if global_state.is_none() {
+                                            let handle = cx.open_window(
+                                                WindowOptions {
+                                                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                                                        origin: Point { x: px(400.0), y: px(200.0) },
+                                                        size: Size {
+                                                            width: px(800.0),
+                                                            height: px(60.0),
+                                                        },
+                                                    })),
+                                                    titlebar: None,
+                                                    window_background: WindowBackgroundAppearance::Transparent,
+                                                    kind: WindowKind::PopUp,
+                                                    ..WindowOptions::default()
+                                                },
+                                                |_, cx| {
+                                                    let model = cx.new(SearchAppModel::new);
+                                                    cx.new(|cx| QuickBarView::new(model, cx))
+                                                },
+                                            ).expect("failed to open quick bar");
+                                            
+                                            cx.update_global::<GlobalAppState, _>(|state, _| {
+                                                state.quick_bar = Some(handle);
+                                            });
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                        // Poll interval
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(100))
+                            .await;
+                    }
+                }
+            })
+            .detach();
+        }
         cx.bind_keys([
             KeyBinding::new("cmd-k", FocusSearch, None),
             KeyBinding::new("ctrl-k", FocusSearch, None),
