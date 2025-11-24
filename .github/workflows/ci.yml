@@ -14,6 +14,10 @@ jobs:
   windows-tests:
     name: Windows / fmt + clippy + tests
     runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: target
+      CARGO_INCREMENTAL: 0
     defaults:
       run:
         shell: pwsh
@@ -58,6 +62,10 @@ jobs:
     runs-on: windows-latest
     needs: [windows-tests]
     if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: target
+      CARGO_INCREMENTAL: 0
     defaults:
       run:
         shell: pwsh
@@ -117,6 +125,10 @@ jobs:
     name: Windows / E2E smoke (service + CLI)
     runs-on: windows-latest
     needs: [windows-tests]
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: target
+      CARGO_INCREMENTAL: 0
     defaults:
       run:
         shell: pwsh
