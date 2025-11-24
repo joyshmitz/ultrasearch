@@ -103,8 +103,13 @@ jobs:
         run: cargo build --release
       - name: Install WiX Toolset
         run: |
-          choco install wixtoolset --version 3.14.0 -y
-          "WIX=$((Get-Item 'C:/Program Files (x86)/WiX Toolset v3.14/bin').FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $wixRoot = Get-ChildItem "C:/Program Files (x86)" -Filter "WiX Toolset v3.*" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $wixRoot) {
+            choco install wixtoolset --version 3.14.0 -y --allow-downgrade
+            $wixRoot = Get-ChildItem "C:/Program Files (x86)" -Filter "WiX Toolset v3.*" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          }
+          if (-not $wixRoot) { throw "WiX Toolset not found after install" }
+          "WIX=$($wixRoot.FullName)\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Install cargo-wix
         run: cargo install cargo-wix --locked
       - name: Build unsigned MSI (ui crate)
