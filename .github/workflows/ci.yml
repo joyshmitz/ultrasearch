@@ -11,58 +11,6 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  linux-checks:
-    name: Linux / fmt + clippy + tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Linux build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mold clang pkg-config libgtk-3-dev
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: clippy,rustfmt
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo
-          restore-keys: ${{ runner.os }}-cargo-
-      - name: Cargo fmt
-        run: cargo fmt --check
-      - name: Cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
-      - name: Cargo test (all targets, all features)
-        run: cargo test --all-targets --all-features -- --nocapture
-
-  macos-checks:
-    name: macOS / fmt + clippy + tests
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install macOS build deps
-        run: brew install gtk+3
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: clippy,rustfmt
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo
-          restore-keys: ${{ runner.os }}-cargo-
-      - name: Cargo fmt
-        run: cargo fmt --check
-      - name: Cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
-      - name: Cargo test (all targets, all features)
-        run: cargo test --all-targets --all-features -- --nocapture
-
   windows-tests:
     name: Windows / fmt + clippy + tests
     runs-on: windows-latest
@@ -136,7 +84,7 @@ jobs:
   windows-e2e-smoke:
     name: Windows / E2E smoke (service + CLI)
     runs-on: windows-latest
-    needs: [linux-checks, macos-checks, windows-tests]
+    needs: [windows-tests]
     defaults:
       run:
         shell: pwsh
