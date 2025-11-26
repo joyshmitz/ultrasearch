@@ -125,6 +125,7 @@ jobs:
         id: build_msi
         run: |
           $ErrorActionPreference = "Stop"
+          $ProgressPreference = "SilentlyContinue"
           $env:CARGO_TARGET_DIR = Join-Path $env:GITHUB_WORKSPACE "target"
           $uiDir = Join-Path $env:GITHUB_WORKSPACE "ultrasearch\crates\ui"
           $binPath = Join-Path $env:CARGO_TARGET_DIR "release\ui.exe"
@@ -138,19 +139,30 @@ jobs:
           $tempDir = Join-Path $env:RUNNER_TEMP "wix_manifest"
           New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
           $tempManifest = Join-Path $tempDir "Cargo.toml"
-          # Patch workspace dependencies to wildcard versions and add a dummy bin so metadata succeeds.
-          (Get-Content (Join-Path $uiDir "Cargo.toml")) -replace 'workspace\s*=\s*true', 'version = "*"' | Set-Content $tempManifest
+          $tempSrc = Join-Path $tempDir "placeholder.rs"
+
+          # Build a minimal single-package manifest by transforming the real one.
+          $manifest = Get-Content (Join-Path $uiDir "Cargo.toml")
+          $manifest = $manifest -replace 'workspace\s*=\s*true', 'version = "*"'
+          # Strip any [workspace] table if present (defensive)
+          $manifest = $manifest -replace '^\s*\[workspace\].*', ''
+          Set-Content $tempManifest $manifest
+
           Add-Content $tempManifest @"
 
 [[bin]]
 name = "ui"
 path = "placeholder.rs"
 "@
-          # Create placeholder source so cargo metadata is satisfied.
-          Set-Content -Path (Join-Path $tempDir "placeholder.rs") -Value "fn main() {}"
+          Set-Content -Path $tempSrc -Value "fn main() {}"
+
+          Write-Host "=== temp manifest ==="
+          Get-Content $tempManifest
           Write-Host "Before wix, wix dir listing:"
           Get-ChildItem "$env:CARGO_TARGET_DIR/wix" -Recurse -ErrorAction SilentlyContinue
-          cargo wix --manifest-path $tempManifest --no-build --bin-path "$binPath"
+
+          cargo wix --manifest-path $tempManifest --no-build --bin-path "$binPath" -v
+
           Write-Host "After wix, wix dir listing:"
           Get-ChildItem "$env:CARGO_TARGET_DIR/wix" -Recurse -ErrorAction SilentlyContinue
       - name: List wix outputs
