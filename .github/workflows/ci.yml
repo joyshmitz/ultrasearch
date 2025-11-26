@@ -116,7 +116,7 @@ jobs:
           if (-not $wixRoot) { throw "WiX Toolset not found after install" }
           "WIX=$($wixRoot.FullName)\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Install cargo-wix
-        run: cargo install --git https://github.com/volks73/cargo-wix --force
+        run: cargo install --git https://github.com/volks73/cargo-wix cargo-wix --force
       - name: Prepare wix manifest without workspace inheritance
         run: |
           cd ultrasearch/crates/ui
