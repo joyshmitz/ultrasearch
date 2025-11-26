@@ -31,7 +31,16 @@ jobs:
           $ErrorActionPreference = "Stop"
           $uri = "https://download.oracle.com/graalvm/23/latest/graalvm-jdk-23_windows-x64_bin.zip"
           $zip = "$env:TEMP\graalvm.zip"
-          Invoke-WebRequest -Uri $uri -OutFile $zip
+          for ($i=1; $i -le 5; $i++) {
+            try {
+              Write-Host "Downloading GraalVM attempt $i..."
+              Invoke-WebRequest -Uri $uri -OutFile $zip -UseBasicParsing
+              break
+            } catch {
+              if ($i -eq 5) { throw }
+              Start-Sleep -Seconds 5
+            }
+          }
           $dest = "C:\Program Files\GraalVM"
           if (-Not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
           Expand-Archive -Force -Path $zip -DestinationPath $dest
@@ -82,7 +91,16 @@ jobs:
           $ErrorActionPreference = "Stop"
           $uri = "https://download.oracle.com/graalvm/23/latest/graalvm-jdk-23_windows-x64_bin.zip"
           $zip = "$env:TEMP\graalvm.zip"
-          Invoke-WebRequest -Uri $uri -OutFile $zip
+          for ($i=1; $i -le 5; $i++) {
+            try {
+              Write-Host "Downloading GraalVM attempt $i..."
+              Invoke-WebRequest -Uri $uri -OutFile $zip -UseBasicParsing
+              break
+            } catch {
+              if ($i -eq 5) { throw }
+              Start-Sleep -Seconds 5
+            }
+          }
           $dest = "C:\Program Files\GraalVM"
           if (-Not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
           Expand-Archive -Force -Path $zip -DestinationPath $dest
