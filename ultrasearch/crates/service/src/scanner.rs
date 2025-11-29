@@ -45,24 +45,14 @@ pub fn scan_volumes(cfg: &AppConfig) -> Result<Vec<JobSpec>> {
 
     // Filter based on config
     let volumes: Vec<_> = if cfg.volumes.is_empty() {
-        // If no volumes specified, maybe default to all?
-        // Or if onboarding wizard sets it, we respect it.
-        // "First-Run" usually sets it.
-        // If empty, we scan nothing? Or all?
-        // Let's default to ALL if empty for backward compat/simplicity,
-        // OR assume empty means "configured to scan nothing".
-        // The Wizard sets "Select Drives" (defaults to all fixed).
-        // So if config is empty, it might mean "not set up yet".
-        // But `bootstrap.rs` used to scan all.
-        // Let's keep "Scan All" if config.volumes is empty to avoid breaking existing behavior.
-        all_volumes
+        tracing::info!(
+            "Volume list empty in config; skipping initial scan until a drive is selected."
+        );
+        Vec::new()
     } else {
         all_volumes
             .into_iter()
             .filter(|v| {
-                // Check if any drive letter matches config
-                // Config has "C:\" or "D:\"
-                // VolumeInfo has `drive_letters` vec['C']
                 v.drive_letters.iter().any(|l| {
                     let mount = format!("{}:\\", l);
                     cfg.volumes.contains(&mount)
@@ -73,6 +63,7 @@ pub fn scan_volumes(cfg: &AppConfig) -> Result<Vec<JobSpec>> {
 
     if volumes.is_empty() {
         tracing::info!("No volumes matched configuration.");
+        update_status_volumes(Vec::new());
         return Ok(Vec::new());
     }
 
@@ -154,6 +145,7 @@ pub async fn watch_changes(cfg: AppConfig) -> Result<()> {
 
     if volumes.is_empty() {
         tracing::info!("change watcher: no volumes matched configuration");
+        update_status_volumes(Vec::new());
         return Ok(());
     }
 
@@ -228,17 +220,19 @@ fn build_content_jobs(metas: &[FileMeta], cfg: &AppConfig) -> Vec<JobSpec> {
 
 fn filter_volumes(cfg: AppConfig, all_volumes: Vec<VolumeInfo>) -> Vec<VolumeInfo> {
     if cfg.volumes.is_empty() {
-        return all_volumes;
-    }
-    all_volumes
-        .into_iter()
-        .filter(|v| {
-            v.drive_letters.iter().any(|l| {
-                let mount = format!("{}:\\", l);
-                cfg.volumes.contains(&mount)
+        tracing::info!("Volume filter empty; watcher will stay idle until drives are selected.");
+        Vec::new()
+    } else {
+        all_volumes
+            .into_iter()
+            .filter(|v| {
+                v.drive_letters.iter().any(|l| {
+                    let mount = format!("{}:\\", l);
+                    cfg.volumes.contains(&mount)
+                })
             })
-        })
-        .collect()
+            .collect()
+    }
 }
 
 fn events_to_jobs(events: &[FileEvent], cfg: &AppConfig) -> Vec<JobSpec> {
