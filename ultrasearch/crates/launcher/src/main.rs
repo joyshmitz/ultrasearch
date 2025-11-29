@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use anyhow::{Context, Result};
 use console::style;
 use dotenvy::{dotenv, from_path};
@@ -57,42 +59,60 @@ impl Drop for ChildGuard {
 }
 
 fn main() -> Result<()> {
+    let show_console = env::args().any(|a| {
+        a.eq_ignore_ascii_case("--show-console") || a.eq_ignore_ascii_case("-show-console")
+    });
     let exe_dir = current_exe_dir()?;
     load_env(&exe_dir);
 
     let service_path = resolve_binary(&exe_dir, "service")?;
     let ui_path = resolve_binary(&exe_dir, "ui")?;
 
-    println!(
-        "{} {}",
-        style("Launching UltraSearch").bold().green(),
-        style("one-click mode").cyan()
-    );
+    if show_console {
+        println!(
+            "{} {}",
+            style("Launching UltraSearch").bold().green(),
+            style("one-click mode").cyan()
+        );
+    }
 
     let mut service_cmd = Command::new(&service_path);
     service_cmd
         .arg("--console")
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit()) // Allow user to see service logs
-        .stderr(Stdio::inherit())
         .creation_flags(0x08000000); // CREATE_NO_WINDOW
+    if show_console {
+        service_cmd
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+    } else {
+        service_cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
     let mut service = ChildGuard::spawn("service", &mut service_cmd)?;
-    println!("{}", style("service started, waiting for IPC...").dim());
+    if show_console {
+        println!("{}", style("service started, waiting for IPC...").dim());
+    }
 
     wait_for_ipc_ready(&mut service)?;
 
     let mut ui_cmd = Command::new(&ui_path);
-    ui_cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+    ui_cmd.stdin(Stdio::null()).creation_flags(0x08000000);
+    if show_console {
+        ui_cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    } else {
+        ui_cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
     let ui = ChildGuard::spawn("ui", &mut ui_cmd)?;
-    println!("{}", style("ui launched; press Ctrl+C to exit").dim());
+    if show_console {
+        println!("{}", style("ui launched; press Ctrl+C to exit").dim());
+    }
 
     // When UI exits, tear down service.
     ui.wait()?;
     service.kill_if_running();
-    println!("{}", style("UltraSearch closed").green());
+    if show_console {
+        println!("{}", style("UltraSearch closed").green());
+    }
     Ok(())
 }
 
