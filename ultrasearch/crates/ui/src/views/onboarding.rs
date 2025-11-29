@@ -124,7 +124,7 @@ impl OnboardingView {
         }
 
         let client = self.model.read(cx).client.clone();
-        cx.spawn(|_, _cx: &mut AsyncApp| async move {
+        cx.spawn(|_, _app: &mut AsyncApp| async move {
             let req = ipc::ReloadConfigRequest {
                 id: uuid::Uuid::new_v4(),
             };
@@ -492,7 +492,7 @@ impl Render for OnboardingView {
                                     .bg(if disable_primary {
                                         colors.border
                                     } else {
-                                        colors.match_highlight
+                                        colors.accent
                                     })
                                     .text_color(if disable_primary {
                                         colors.text_secondary

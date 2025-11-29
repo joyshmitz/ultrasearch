@@ -379,7 +379,7 @@ impl Render for SearchView {
                                     .px_3()
                                     .py_1p5()
                                     .rounded_md()
-                                    .bg(colors.match_highlight)
+                                    .bg(colors.accent)
                                     .text_color(colors.bg)
                                     .text_size(px(12.))
                                     .font_weight(FontWeight::SEMIBOLD)
