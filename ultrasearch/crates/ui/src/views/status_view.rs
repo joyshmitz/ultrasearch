@@ -59,15 +59,74 @@ impl Render for StatusView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme::active_colors(cx);
         let status = self.model.read(cx).status.clone();
-        let totals = status.volumes.iter().fold((0u64, 0u64), |acc, v| {
-            (acc.0 + v.indexed_files, acc.1 + v.pending_files)
-        });
-        let (indexed_files, pending_files) = totals;
-        let total_files = indexed_files + pending_files;
-        let progress_pct = if total_files > 0 {
-            ((indexed_files as f64 / total_files as f64) * 100.0).min(100.0)
+        let totals = status
+            .volumes
+            .iter()
+            .fold((0u64, 0u64, 0u64, 0u64), |acc, v| {
+                (
+                    acc.0 + v.indexed_files,
+                    acc.1 + v.pending_files,
+                    acc.2 + v.indexed_bytes,
+                    acc.3 + v.pending_bytes,
+                )
+            });
+        let (indexed_files, pending_files, indexed_bytes, pending_bytes) = totals;
+
+        let total_jobs = status.content_jobs_total;
+        let remaining_jobs = status.content_jobs_remaining;
+        let total_bytes = status.content_bytes_total;
+        let remaining_bytes = status.content_bytes_remaining;
+        let queue_depth = status
+            .metrics
+            .as_ref()
+            .and_then(|m| m.queue_depth)
+            .unwrap_or(0);
+        let active_workers = status
+            .metrics
+            .as_ref()
+            .and_then(|m| m.active_workers)
+            .unwrap_or(0);
+
+        let (
+            progress_pct,
+            display_completed,
+            display_remaining,
+            display_bytes_done,
+            display_bytes_left,
+        ) = if total_jobs > 0 {
+            let completed = total_jobs.saturating_sub(remaining_jobs);
+            let pct = (completed as f64 / total_jobs as f64) * 100.0;
+            (
+                pct.min(100.0),
+                completed,
+                remaining_jobs,
+                total_bytes.saturating_sub(remaining_bytes),
+                remaining_bytes,
+            )
         } else {
-            0.0
+            let total_files = indexed_files + pending_files;
+            let pct = if total_files > 0 {
+                (indexed_files as f64 / total_files as f64) * 100.0
+            } else {
+                0.0
+            };
+            (
+                pct.min(100.0),
+                indexed_files,
+                pending_files,
+                indexed_bytes,
+                pending_bytes,
+            )
+        };
+        let eta_label = if display_remaining == 0 {
+            "Complete".to_string()
+        } else if queue_depth > 0 || active_workers > 0 {
+            format!(
+                "≈ {} jobs remaining ({} workers active)",
+                display_remaining, active_workers
+            )
+        } else {
+            "Waiting to start indexing…".to_string()
         };
 
         div()
@@ -180,14 +239,45 @@ impl Render for StatusView {
                                     )
                                     .child(self.render_kv_row(
                                         "Indexed files",
-                                        format!("{}", indexed_files),
+                                        format!("{}", display_completed),
                                         cx,
                                     ))
                                     .child(self.render_kv_row(
-                                        "Pending files",
-                                        format!("{}", pending_files),
+                                        "Pending / queued",
+                                        format!("{}", display_remaining),
                                         cx,
                                     ))
+                                    .child(self.render_kv_row(
+                                        "Bytes indexed",
+                                        Self::format_bytes(display_bytes_done),
+                                        cx,
+                                    ))
+                                    .child(self.render_kv_row(
+                                        "Bytes remaining (est.)",
+                                        Self::format_bytes(display_bytes_left),
+                                        cx,
+                                    ))
+                                    .child(self.render_kv_row("ETA", eta_label.clone(), cx))
+                                    .when(status.metrics.is_some(), |d: Div| {
+                                        let m = status.metrics.as_ref().unwrap();
+                                        d.child(self.render_kv_row(
+                                            "Queue depth",
+                                            format!("{}", m.queue_depth.unwrap_or(0)),
+                                            cx,
+                                        ))
+                                        .child(self.render_kv_row(
+                                            "Active workers",
+                                            format!("{}", m.active_workers.unwrap_or(0)),
+                                            cx,
+                                        ))
+                                        .child(
+                                            self.render_kv_row(
+                                                "Jobs enqueued",
+                                                format!("{}", m.content_enqueued.unwrap_or(0)),
+                                                cx,
+                                            ),
+                                        )
+                                    })
                                     .child(
                                         div()
                                             .flex()

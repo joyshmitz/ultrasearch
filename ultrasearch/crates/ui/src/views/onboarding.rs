@@ -125,10 +125,16 @@ impl OnboardingView {
 
         let client = self.model.read(cx).client.clone();
         cx.spawn(|_, _app: &mut AsyncApp| async move {
-            let req = ipc::ReloadConfigRequest {
+            // Reload configuration first, then trigger a rescan so indexing actually starts.
+            let reload_req = ipc::ReloadConfigRequest {
                 id: uuid::Uuid::new_v4(),
             };
-            let _ = client.reload_config(req).await;
+            let _ = client.reload_config(reload_req).await;
+
+            let rescan_req = ipc::RescanRequest {
+                id: uuid::Uuid::new_v4(),
+            };
+            let _ = client.rescan(rescan_req).await;
         })
         .detach();
 
@@ -140,7 +146,6 @@ impl OnboardingView {
 
         cx.dispatch_action(&FinishOnboarding);
     }
-
     fn render_progress(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme::active_colors(cx);
         let labels = ["Welcome", "Choose drives"];
@@ -519,5 +524,3 @@ impl Render for OnboardingView {
             )
     }
 }
-
-

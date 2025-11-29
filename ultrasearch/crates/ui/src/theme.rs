@@ -63,8 +63,8 @@ impl Theme {
                 divider: hsla(0.0, 0.0, 0.2, 1.0),        // #333333
                 text_primary: hsla(0.0, 0.0, 0.894, 1.0), // #e4e4e4
                 text_secondary: hsla(0.0, 0.0, 0.6, 1.0), // #999999
-                accent: hsla(0.08, 0.85, 0.58, 1.0),      // vivid orange for primary actions
-                match_highlight: hsla(0.1, 0.6, 0.5, 0.5),
+                accent: hsla(0.08, 0.92, 0.52, 1.0),      // richer orange for primary actions
+                match_highlight: hsla(0.08, 0.70, 0.55, 0.65),
                 selection_bg: hsla(0.6, 0.5, 0.4, 0.3),
                 border: hsla(0.0, 0.0, 0.25, 1.0),
                 panel_bg: hsla(0.0, 0.0, 0.13, 1.0),
@@ -74,8 +74,8 @@ impl Theme {
                 divider: hsla(0.0, 0.0, 0.9, 1.0),        // #e5e5e5
                 text_primary: hsla(0.0, 0.0, 0.1, 1.0),   // #1a1a1a
                 text_secondary: hsla(0.0, 0.0, 0.4, 1.0), // #666666
-                accent: hsla(0.08, 0.8, 0.55, 1.0),
-                match_highlight: hsla(0.1, 0.8, 0.6, 0.5),
+                accent: hsla(0.08, 0.88, 0.50, 1.0),
+                match_highlight: hsla(0.08, 0.75, 0.52, 0.55),
                 selection_bg: hsla(0.6, 0.6, 0.8, 0.2),
                 border: hsla(0.0, 0.0, 0.85, 1.0),
                 panel_bg: hsla(0.0, 0.0, 0.95, 1.0),

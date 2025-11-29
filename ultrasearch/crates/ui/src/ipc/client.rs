@@ -1,7 +1,7 @@
 use anyhow::Result;
 use ipc::{
-    ReloadConfigRequest, ReloadConfigResponse, SearchRequest, SearchResponse, StatusRequest,
-    StatusResponse,
+    ReloadConfigRequest, ReloadConfigResponse, RescanRequest, RescanResponse, SearchRequest,
+    SearchResponse, StatusRequest, StatusResponse,
 };
 #[cfg(windows)]
 use std::sync::Arc;
@@ -64,8 +64,27 @@ impl IpcClient {
                 volumes: vec![],
                 last_index_commit_ts: None,
                 scheduler_state: "ui-stub".into(),
+                content_jobs_total: Some(0),
+                content_jobs_remaining: Some(0),
+                content_bytes_total: Some(0),
+                content_bytes_remaining: Some(0),
                 metrics: None,
                 served_by: Some("ui-stub".into()),
+            })
+        }
+    }
+
+    pub async fn rescan(&self, req: RescanRequest) -> Result<RescanResponse> {
+        #[cfg(windows)]
+        {
+            self.inner.rescan(req).await
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(RescanResponse {
+                id: req.id,
+                success: true,
+                message: Some("ui-stub".into()),
             })
         }
     }

@@ -64,6 +64,10 @@ pub struct SearchStatus {
     pub volumes: Vec<VolumeStatus>,
     pub metrics: Option<MetricsSnapshot>,
     pub served_by: Option<String>,
+    pub content_jobs_total: u64,
+    pub content_jobs_remaining: u64,
+    pub content_bytes_total: u64,
+    pub content_bytes_remaining: u64,
 }
 
 impl Default for SearchStatus {
@@ -79,6 +83,10 @@ impl Default for SearchStatus {
             volumes: Vec::new(),
             metrics: None,
             served_by: None,
+            content_jobs_total: 0,
+            content_jobs_remaining: 0,
+            content_bytes_total: 0,
+            content_bytes_remaining: 0,
         }
     }
 }
@@ -160,6 +168,14 @@ impl SearchAppModel {
                                         model.status.volumes = resp.volumes;
                                         model.status.metrics = resp.metrics;
                                         model.status.served_by = resp.served_by;
+                                        model.status.content_jobs_total =
+                                            resp.content_jobs_total.unwrap_or(0);
+                                        model.status.content_jobs_remaining =
+                                            resp.content_jobs_remaining.unwrap_or(0);
+                                        model.status.content_bytes_total =
+                                            resp.content_bytes_total.unwrap_or(0);
+                                        model.status.content_bytes_remaining =
+                                            resp.content_bytes_remaining.unwrap_or(0);
                                         if was_disconnected {
                                             model.ipc_recent_reconnect = true;
                                             cx.spawn(|weak: WeakEntity<SearchAppModel>, cx: &mut AsyncApp| {

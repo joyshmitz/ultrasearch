@@ -227,6 +227,21 @@ impl SearchView {
         }
     }
 
+    fn format_bytes(bytes: u64) -> String {
+        const KB: u64 = 1024;
+        const MB: u64 = KB * 1024;
+        const GB: u64 = MB * 1024;
+        if bytes >= GB {
+            format!("{:.2} GB", bytes as f64 / GB as f64)
+        } else if bytes >= MB {
+            format!("{:.1} MB", bytes as f64 / MB as f64)
+        } else if bytes >= KB {
+            format!("{:.1} KB", bytes as f64 / KB as f64)
+        } else {
+            format!("{bytes} B")
+        }
+    }
+
     fn render_mode_button(
         &self,
         label: &'static str,
@@ -280,15 +295,52 @@ impl Render for SearchView {
         let query = model.query.clone();
         let ipc_recovered = model.ipc_recent_reconnect;
         let colors = theme::active_colors(cx);
-        let totals = status.volumes.iter().fold((0u64, 0u64), |acc, v| {
-            (acc.0 + v.indexed_files, acc.1 + v.pending_files)
-        });
-        let (indexed_files, pending_files) = totals;
-        let total_files = indexed_files + pending_files;
-        let progress_pct = if total_files > 0 {
-            ((indexed_files as f64 / total_files as f64) * 100.0).min(100.0)
+        let totals = status
+            .volumes
+            .iter()
+            .fold((0u64, 0u64, 0u64, 0u64), |acc, v| {
+                (
+                    acc.0 + v.indexed_files,
+                    acc.1 + v.pending_files,
+                    acc.2 + v.indexed_bytes,
+                    acc.3 + v.pending_bytes,
+                )
+            });
+        let (indexed_files, pending_files, indexed_bytes, pending_bytes) = totals;
+        let total_jobs = status.content_jobs_total;
+        let remaining_jobs = status.content_jobs_remaining;
+        let content_bytes_total = status.content_bytes_total;
+        let content_bytes_remaining = status.content_bytes_remaining;
+        let total_bytes = if content_bytes_total > 0 {
+            content_bytes_total
         } else {
-            0.0
+            indexed_bytes + pending_bytes
+        };
+        let remaining_bytes = if content_bytes_total > 0 {
+            content_bytes_remaining
+        } else {
+            pending_bytes
+        };
+        let (progress_pct, completed_label, remaining_label) = if total_jobs > 0 {
+            let completed = total_jobs.saturating_sub(remaining_jobs);
+            let pct = (completed as f64 / total_jobs as f64) * 100.0;
+            (
+                pct.min(100.0),
+                format!("Indexed {}", Self::format_number(completed)),
+                format!("Remaining {}", Self::format_number(remaining_jobs)),
+            )
+        } else {
+            let total_files = indexed_files + pending_files;
+            let pct = if total_files > 0 {
+                (indexed_files as f64 / total_files as f64) * 100.0
+            } else {
+                0.0
+            };
+            (
+                pct.min(100.0),
+                format!("Indexed {}", Self::format_number(indexed_files)),
+                format!("Pending {}", Self::format_number(pending_files)),
+            )
         };
         let metrics = status.metrics.clone();
         let queue_depth = metrics.as_ref().and_then(|m| m.queue_depth).unwrap_or(0);
@@ -630,10 +682,14 @@ impl Render for SearchView {
                     .child(
                         div()
                             .text_color(colors.text_secondary)
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(format!("{completed_label} | {remaining_label}"))
                             .child(format!(
-                                "Indexed {} | Pending {}",
-                                Self::format_number(indexed_files),
-                                Self::format_number(pending_files)
+                                "Bytes {} / {}",
+                                Self::format_bytes(total_bytes.saturating_sub(remaining_bytes)),
+                                Self::format_bytes(total_bytes)
                             )),
                     )
                     .child(
@@ -655,7 +711,7 @@ impl Render for SearchView {
                             .text_color(colors.text_secondary)
                             .child(format!("{:.0}% complete", progress_pct)),
                     )
-                    .child(div().text_color(colors.border).child("•"))
+                    .child(div().text_color(colors.border).child("|"))
                     .child(
                         div()
                             .text_color(colors.text_secondary)
