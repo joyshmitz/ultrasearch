@@ -25,6 +25,7 @@ use crate::{
     init_tracing_with_config,
     meta_ingest::ingest_with_paths,
     metrics::{init_metrics_from_config, set_global_metrics},
+    priority::apply_background_priorities,
     scanner::{scan_volumes, watch_changes},
     scheduler_runtime::SchedulerRuntime,
     search_handler::set_search_handler,
@@ -42,6 +43,9 @@ pub fn run_app_with_options(
     mut shutdown_rx: mpsc::Receiver<()>,
     opts: BootstrapOptions,
 ) -> Result<()> {
+    // Always drop to background-friendly priorities before heavy work.
+    apply_background_priorities();
+
     let _guard = init_tracing_with_config(&cfg.logging)?;
 
     // Initialize Tokio runtime

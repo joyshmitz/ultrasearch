@@ -31,3 +31,25 @@ pub fn set_process_priority(priority: ProcessPriority) {
     #[cfg(not(target_os = "windows"))]
     let _ = priority;
 }
+
+/// Apply CPU + I/O background-friendly priorities.
+pub fn apply_background_priorities() {
+    set_process_priority(ProcessPriority::Idle);
+    #[cfg(target_os = "windows")]
+    {
+        use tracing::warn;
+        use windows::Win32::System::Threading::{
+            GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN,
+        };
+        unsafe {
+            if let Err(e) = SetThreadPriority(
+                GetCurrentThread(),
+                windows::Win32::System::Threading::THREAD_PRIORITY(
+                    THREAD_MODE_BACKGROUND_BEGIN.0 as i32,
+                ),
+            ) {
+                warn!("Failed to set background thread priority: {e:?}");
+            }
+        }
+    }
+}

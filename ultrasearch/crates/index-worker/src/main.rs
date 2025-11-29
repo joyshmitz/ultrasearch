@@ -87,13 +87,20 @@ fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    // Lower process priority to minimize impact
+    // Lower process + I/O priority to keep the machine responsive
     #[cfg(target_os = "windows")]
-    unsafe {
+    {
         use windows::Win32::System::Threading::{
-            BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, SetPriorityClass,
+            GetCurrentProcess, GetCurrentThread, IDLE_PRIORITY_CLASS, SetPriorityClass,
+            SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN, THREAD_PRIORITY,
         };
-        let _ = SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+        unsafe {
+            let _ = SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS);
+            let _ = SetThreadPriority(
+                GetCurrentThread(),
+                THREAD_PRIORITY(THREAD_MODE_BACKGROUND_BEGIN.0 as i32),
+            );
+        }
     }
 
     let mut args = Args::parse();

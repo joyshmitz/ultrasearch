@@ -49,6 +49,8 @@ windows = { version = "0.52", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Power",
     "Win32_UI_Shell",
+    "Win32_System_WindowsProgramming",
+    "Win32_System_JobObjects",
 ] }
 sysinfo = "*"
 tantivy = { version = "*", features = ["mmap", "lz4-compression"] }
