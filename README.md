@@ -5,63 +5,247 @@
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/Dicklesworthstone/ultrasearch)
 [![Edition](https://img.shields.io/badge/edition-2024-blue.svg)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 
-> **A high-performance, memory-efficient desktop search engine for Windows that combines NTFS MFT enumeration with full-text content indexing. Built entirely in Rust, UltraSearch provides Everything-style instant filename search alongside deep content search capabilities, all while maintaining a minimal memory footprint through careful architectural decisions.**
+> **UltraSearch is a high‑performance, memory‑efficient desktop search engine for Windows.**
+> It combines NTFS MFT enumeration (Everything‑style instant filename search) with full‑text content indexing, all in Rust, with a multi‑process architecture that keeps the always‑on service tiny while isolating heavy work in short‑lived worker processes.
 
-## What's new (UI/UX highlights)
+---
 
-- **Spotlight-style Quick Search** (Alt+Space): floating palette with recent history, keyboard navigation, and inline query highlighting in results.
-- **Keyboard Shortcuts overlay / Help panel** (F1 or Ctrl+/ / Cmd+/): grouped cheatsheet, tray/update tips, closes on Esc or click-out; also available via the header "Help" chip.
-- **Tray awareness**: tooltip reflects Idle / Indexing / Update available / Offline; update panel supports opt-in, check/download/restart flow with release notes.
-- **GraalVM guard for Extractous**: `content-extractor` build.rs enforces GraalVM CE 23.x when `extractous_backend` is enabled; setup instructions in `docs/GRAALVM_SETUP.md`.
-- **IPC self-healing**: named-pipe client retries with backoff, handling service restarts and pipe-busy states gracefully.
-- **Status metrics**: queue depth, active workers, and content jobs enqueued/dropped surfaced in status/metrics responses.
+## TL;DR – What it is, why it’s great, and why you’d use it
 
-See `docs/FEATURES.md` for a concise feature reference and setup links.
+**What it is**
 
-UltraSearch represents a fundamental rethinking of desktop search architecture. Rather than treating search as a monolithic application, it decomposes the problem into specialized components that work together seamlessly: a lightweight always-on service for metadata queries, isolated worker processes for resource-intensive content extraction, and a modern GPU-accelerated UI that feels instant.
+* A **Windows desktop search stack**: background service + indexing workers + GPU‑accelerated UI.
+* **Filename search** is Everything‑fast, backed by NTFS MFT enumeration and USN journal tailing.
+* **Content search** is full‑text over extracted file contents using Tantivy, with Extractous/IFilter/OCR backends.
 
-## Purpose and Motivation
+**Why it’s great**
 
-Desktop search tools have historically forced users into a false dichotomy: choose speed or comprehensiveness. UltraSearch eliminates this trade-off by leveraging modern systems programming techniques and Windows-specific optimizations.
+* **Instant filename search** even on millions of files (MFT + USN; no recursive crawlers).
+* **Deep content search** with proper full‑text indexing instead of “grep‑style” one‑offs.
+* **Tiny idle footprint**: the service runs in **tens of MB** instead of hundreds.
+* **Background‑respectful**: content indexing only when the machine is truly idle and not under load.
+* **Transparent internals**: status/metrics APIs, structured logs, and clear scheduler behavior.
 
-### The Problem Space
+**Why not just use Windows Search / Everything / yet another crawler?**
 
-**Windows Search** provides comprehensive content indexing but suffers from fundamental architectural limitations:
-* Slow initial builds requiring hours or days for large filesystems
-* High memory usage (hundreds of megabytes resident) even when idle
-* Intrusive background activity that impacts system responsiveness
-* Opaque indexing state making troubleshooting difficult
-* Limited query expressiveness and ranking control
+* **Windows Search**
 
-**Everything** demonstrates that instant filename search is achievable:
-* Sub-10ms query latency even on filesystems with millions of files
-* Minimal memory footprint (tens of megabytes)
-* Real-time change detection via USN journal
-* However, it lacks content indexing capabilities entirely
+  * * Good coverage and content indexing.
+  * – Slow initial builds, opaque state, heavy resident memory, intrusive background activity.
+* **Everything**
 
-**Recursive directory crawlers** (used by many search tools) are fundamentally flawed:
-* Must traverse directory trees, opening handles and reading metadata
-* Cannot leverage NTFS's efficient MFT structure
-* Miss files inaccessible via normal directory APIs
-* Scale poorly: O(n) complexity where n is directory depth
+  * * Fantastic filename search via the USN journal and MFT.
+  * – No content indexing at all.
+* **Typical recursive crawlers**
 
-### UltraSearch's Approach
+  * – Walk directory trees, opening handles and reading metadata one directory at a time.
+  * – Scale poorly with depth and can’t fully exploit NTFS internals.
 
-UltraSearch bridges these gaps through architectural innovation:
+**UltraSearch goal:**
+Combine **Everything‑style filename speed** with **Windows Search‑style content coverage**, but with a **service that behaves like a well‑designed daemon** (low memory, cooperative background behavior, strong observability) instead of a monolithic desktop app.
 
-1. **NTFS-Native Indexing**: Direct MFT enumeration eliminates recursive traversal overhead, achieving 100k-1M files/second indexing rates
-2. **Process Isolation**: Heavy extraction work occurs in short-lived worker processes that exit immediately after completion, keeping the service lightweight
-3. **Unified Search Engine**: Both metadata and content queries use Tantivy, providing consistent ranking and query expressiveness
-4. **Intelligent Scheduling**: Background indexing respects user activity and system load, remaining invisible during normal use
-5. **Memory Efficiency**: Memory-mapped storage, zero-copy serialization, and bounded allocations ensure predictable resource usage
+---
 
-The result is a search system that feels instant for filename queries while providing comprehensive content search, all running as a background service that consumes minimal resources.
+## Quickstart for Windows Users
 
-## Architecture Overview
+This section is for people who just want to install and use UltraSearch. The rest of the README is a deep architectural dive.
 
-UltraSearch follows a multi-process architecture designed to isolate resource-intensive operations from the always-on service. This separation ensures the service remains lightweight while allowing heavy extraction and indexing work to occur in isolated worker processes.
+### 1. Download the installer
 
-### High-Level Process Architecture
+> **Download (Windows)**
+> Get the latest UltraSearch installer from the Releases page:
+> **[https://github.com/Dicklesworthstone/ultrasearch/releases/latest](https://github.com/Dicklesworthstone/ultrasearch/releases/latest)**
+
+When releases are published, you’ll see a `.exe` installer asset there. Download that file (e.g. `UltraSearch-Setup-x.y.z.exe`).
+
+### 2. Install
+
+1. Double‑click the downloaded installer.
+2. Follow the on‑screen prompts:
+
+   * Install the **UltraSearch Service** (runs in the background).
+   * Install the **UltraSearch UI** (start menu + tray).
+3. The installer will:
+
+   * Register the Windows service.
+   * Create start menu entries.
+   * Optionally configure **“Start with Windows”** for the UI tray app.
+
+### 3. Launch and search
+
+Once installation completes:
+
+1. Start the UI:
+
+   * From the Start menu (`UltraSearch`), or
+   * From the system tray (if auto‑start enabled).
+2. Trigger Spotlight‑style search with **`Alt+Space`**:
+
+   * A floating palette appears.
+   * Type to search filenames and, once indexing is ready, content.
+3. Hit **Enter** to open the selected file/folder, or use context actions from the result row.
+
+### 4. Background indexing (what to expect)
+
+* **Initial metadata build** runs quickly using direct MFT enumeration.
+* **Content indexing** runs **only when the system is idle and not busy**:
+
+  * Short‑lived worker processes extract and index content.
+  * The always‑on service remains small and responsive.
+
+### 5. Uninstall
+
+Use standard Windows mechanisms:
+
+* **Settings → Apps → Installed apps → UltraSearch → Uninstall**, or
+* **Control Panel → Programs → Programs and Features → UltraSearch → Uninstall**
+
+The uninstaller removes the service, UI, and associated program files. Index/state directories under `%PROGRAMDATA%\UltraSearch` may be preserved for faster re‑installs, depending on installer options.
+
+---
+
+## What’s new – UI / UX Highlights
+
+Recent UI/UX work focuses on making UltraSearch feel like a modern, lightweight desktop companion rather than “a big app you sometimes open”.
+
+* **Spotlight‑style Quick Search (`Alt+Space`)**
+
+  * Floating palette with:
+
+    * **Search‑as‑you‑type** filename search via the meta index.
+    * Inline **query highlighting** in results.
+    * **Recent history** surfaced for quick re‑runs.
+  * Fully keyboard‑driven: arrows to navigate, Enter to open, Esc to dismiss.
+
+* **Keyboard shortcuts overlay / Help panel (`F1`, `Ctrl+/`, `Cmd+/`)**
+
+  * Shows a grouped cheatsheet of global + in‑app shortcuts.
+  * Includes tray / update tips and power‑user tricks.
+  * Accessible both via shortcuts **and** a header “Help” chip in the UI.
+  * Dismissible via Esc or clicking outside.
+
+* **Tray awareness**
+
+  * Tray tooltip reflects **Idle / Indexing / Update available / Offline**.
+  * Update panel supports:
+
+    * Opt‑in update checks.
+    * Check → download → restart flow.
+    * Release notes surfaced inline.
+
+* **GraalVM guard for Extractous**
+
+  * `content-extractor`’s `build.rs` enforces **GraalVM CE 23.x** when the `extractous_backend` feature is enabled.
+  * Setup details live in `docs/GRAALVM_SETUP.md`.
+
+* **IPC self‑healing**
+
+  * Named‑pipe client uses **retry with backoff**.
+  * Handles:
+
+    * Service restarts.
+    * Temporary pipe‑busy states.
+    * Connection races during boot / upgrade.
+
+* **Status metrics**
+
+  * Queue depth, active workers, content jobs enqueued/dropped are surfaced via status/metrics responses.
+  * The UI and external tools can query these to show progress and diagnose issues.
+
+For a concise feature overview with links to docs and setup instructions, see **`docs/FEATURES.md`**.
+
+---
+
+## Why UltraSearch’s architecture looks “over‑engineered”
+
+Most desktop search tools are monolithic: one big process that discovers files, indexes them, extracts content, answers queries, and renders UI. UltraSearch deliberately **splits** this into specialized pieces:
+
+* A tiny **Windows service** that:
+
+  * Enumerates NTFS MFTs and tails USN journals.
+  * Maintains the metadata index for instant filename search.
+  * Manages scheduling and job queues.
+* Short‑lived **worker processes** that:
+
+  * Extract content with Extractous/IFilter/OCR.
+  * Write to the content index.
+  * Exit immediately after committing, releasing all heavy allocations.
+* A GPU‑accelerated **UI process** that:
+
+  * Speaks to the service over named pipes.
+  * Renders virtualized result lists and previews.
+  * Provides a modern, responsive UX.
+
+The design goal: **service stays tiny and predictable**, while heavy work is **isolated, bounded, and disposable**.
+
+---
+
+## 1. Problem Space and High‑Level Approach
+
+### 1.1 The problem space
+
+Desktop search tools have historically forced a choice between **speed** and **completeness**.
+
+**Windows Search** (built‑in indexing) offers comprehensive content coverage but has issues:
+
+* Slow initial index builds (hours or days on large filesystems).
+* High idle memory usage (hundreds of MB resident).
+* Background activity that can visibly affect system responsiveness.
+* Opaque indexing state; debugging “why didn’t it find X?” is hard.
+* Limited query expressiveness and ranking control.
+
+**Everything** shows that instant filename search is possible:
+
+* Sub‑10ms latency for filename queries even on millions of files.
+* Very low memory footprint (tens of MB).
+* Real‑time change detection via the USN journal.
+
+…but it **intentionally doesn’t do content indexing**.
+
+Many “custom search” tools rely on **recursive directory crawlers**:
+
+* Walk directory trees using `FindFirstFile`/`FindNextFile`.
+* Cannot exploit NTFS’s centralized MFT structure.
+* Miss files inaccessible via standard directory APIs.
+* Scale poorly: complexity proportional to directory depth and breadth.
+
+### 1.2 UltraSearch’s approach in one page
+
+UltraSearch bridges these gaps by designing for **NTFS and Windows specifically**, rather than pretending all filesystems are the same:
+
+1. **NTFS‑native indexing**
+
+   * Direct MFT enumeration (via `usn-journal-rs`) instead of recursive traversal.
+   * Achieves **100k–1M files/sec** enumeration on modern SSDs.
+2. **Process isolation**
+
+   * Heavy content extraction and indexing occur in short‑lived worker processes.
+   * Workers exit after finishing a batch, returning the system to a minimal baseline.
+3. **Unified search engine**
+
+   * Both metadata and content indices are powered by **Tantivy**, a Rust search engine.
+   * Consistent scoring, query expressiveness, and field semantics across modes.
+4. **Intelligent scheduling**
+
+   * Background indexing respects **user idle time and system load**.
+   * Content jobs only run when the machine can spare the resources.
+5. **Memory efficiency**
+
+   * Memory‑mapped Tantivy segments.
+   * Zero‑copy serialization for state.
+   * Bounded allocations for writers and extractors.
+
+Result: **Everything‑style speed for filenames** plus **full‑text content search**, with a background service that behaves like a good citizen.
+
+---
+
+## 2. Architecture Overview
+
+UltraSearch uses a **multi‑process architecture**: one service, many short‑lived workers, plus a UI process.
+
+### 2.1 Processes at a glance
+
+The diagram below shows the major processes and their responsibilities.
 
 ```mermaid
 graph TB
@@ -114,7 +298,15 @@ graph TB
     STATUS -->|Exposes| IPC
 ```
 
-### Component Interaction Diagram
+Key points:
+
+* The **service** owns all NTFS handles, indexing decisions, and the metadata index.
+* **Workers** are spun up and torn down by the scheduler to process content jobs.
+* The **UI** talks only to the service via IPC; it never touches the filesystem directly for search.
+
+### 2.2 Startup vs runtime behavior
+
+This diagram separates the initial bootstrapping from normal operation.
 
 ```mermaid
 graph LR
@@ -144,7 +336,13 @@ graph LR
     end
 ```
 
-### Data Flow: Indexing Pipeline
+* Startup: full MFT enumeration + metadata index build, USN watcher, scheduler.
+* Runtime:
+
+  * Queries are handled immediately using the metadata/content indices.
+  * File system changes stream in via USN; scheduler decides when to spawn workers.
+
+### 2.3 Indexing pipeline (data flow)
 
 ```mermaid
 sequenceDiagram
@@ -173,7 +371,9 @@ sequenceDiagram
     WORKER->>WORKER: Exit (release memory)
 ```
 
-### Query Execution Flow
+The **metadata index** is built in a single streaming pass over the MFT; the **content index** is incrementally updated based on USN change events and the scheduler’s decisions.
+
+### 2.4 Query execution flow
 
 ```mermaid
 sequenceDiagram
@@ -208,7 +408,13 @@ sequenceDiagram
     UI->>UI: Render results table
 ```
 
-### Scheduler State Machine
+Modes:
+
+* **NameOnly** – Everything‑style filename search via the metadata index.
+* **Content** – pure full‑text search via the content index.
+* **Hybrid** – merge of both, with score fusion by `DocKey`.
+
+### 2.5 Scheduler state machine
 
 ```mermaid
 stateDiagram-v2
@@ -223,72 +429,81 @@ stateDiagram-v2
     DeepIdle --> DeepIdle: Full Indexing
 ```
 
-## Core Data Model
+* **Active** – user interacting: only cheap, critical updates.
+* **WarmIdle** – short idle: metadata maintenance allowed.
+* **DeepIdle** – sustained idle: full content indexing allowed, subject to system load constraints.
 
-UltraSearch's data model is designed around efficient storage, fast queries, and cross-index correlation. Every design decision prioritizes memory efficiency and query performance.
+---
 
-### Identifier System
+## 3. Core Data Model
 
-The identifier hierarchy enables efficient storage while maintaining the ability to correlate documents across multiple indices.
+UltraSearch’s data model is designed around **efficient storage**, **fast queries**, and **stable correlation** between metadata and content indices.
+
+### 3.1 Identifier system
+
+Identifiers are chosen to align with NTFS and to pack efficiently into 64‑bit keys.
 
 #### VolumeId (u16)
 
-A small integer assigned at runtime that maps to volume GUID paths and drive letters.
+A small integer assigned at runtime that maps to NTFS volume GUIDs and drive letters.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ VolumeId: u16                                           │
 ├─────────────────────────────────────────────────────────┤
-│ Range: 0..65535                                         │
+│ Range:      0..65535                                   │
 │ Assignment: Sequential at service startup              │
 │ Persistence: Stored in volume state files              │
-│ Use Cases: Per-volume filtering, isolation              │
+│ Use Cases: Per-volume filtering, isolation             │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Design Rationale**: 
-* 16 bits provides 65,535 possible volumes, far exceeding practical needs
-* Small size enables efficient packing into composite keys
-* Sequential assignment simplifies volume management
-* Runtime assignment allows dynamic volume discovery
+**Design rationale**
+
+* 16 bits → 65,535 possible volumes, far beyond practical needs.
+* Tiny type → efficient packing into composite keys.
+* Sequential assignment → simple volume bookkeeping.
+* Runtime assignment → supports dynamic volume discovery.
 
 #### FileId (u64)
 
-The 64-bit NTFS File Reference Number (FRN) from the MFT.
+The 64‑bit NTFS File Reference Number (FRN) from the MFT.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ FileId: u64                                             │
 ├─────────────────────────────────────────────────────────┤
-│ Bits 0-47:  File Reference Number (FRN)                │
-│ Bits 48-63: Sequence Number                            │
-│ Stability: Persists across renames (same volume)       │
-│ Detection: Sequence number detects stale references    │
+│ Bits 0-47:  File Reference Number (FRN)                 │
+│ Bits 48-63: Sequence Number                             │
+│ Stability: Persists across renames (same volume)        │
+│ Detection: Sequence number detects stale references     │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Design Rationale**:
-* FRN is NTFS's native file identifier, providing direct MFT access
-* Sequence number enables detection of deleted/reused file entries
-* 48-bit FRN supports 281 trillion files per volume (practical limit: ~4 billion)
-* Stable across renames enables efficient index updates
+**Design rationale**
+
+* FRN is NTFS’s native file identifier; it directly indexes into the MFT.
+* Sequence number lets us detect deleted or reused entries.
+* 48‑bit FRN supports absurdly many files per volume (281T theoretical, ~4B practical).
+* Stable across renames → index updates don’t require path walks.
 
 #### DocKey (u64)
 
-Composite key packing VolumeId and FileId into a single 64-bit value.
+A composite key encoding `(VolumeId, FileId)` into a single 64‑bit value.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ DocKey: u64                                             │
 ├─────────────────────────────────────────────────────────┤
-│ Bits 0-47:  FileId (FRN + sequence)                    │
-│ Bits 48-63: VolumeId                                   │
-│ Format: "{volume}:0x{frn_hex}"                        │
-│ Use: Primary key for all index operations               │
+│ Bits 0-47:  FileId (FRN + sequence)                     │
+│ Bits 48-63: VolumeId                                    │
+│ Format:     "{volume}:0x{frn_hex}" for debugging        │
+│ Use:        Primary key for all index operations        │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Implementation**:
+**Implementation**
+
 ```rust
 impl DocKey {
     pub const fn from_parts(volume: VolumeId, file: FileId) -> Self {
@@ -304,22 +519,29 @@ impl DocKey {
 }
 ```
 
-**Design Rationale**:
-* Single 64-bit value enables efficient storage and comparison
-* Fast field support in Tantivy enables per-volume filtering without document retrieval
-* Human-readable format aids debugging and logging
-* Enables efficient range queries for volume-based operations
+**Design rationale**
 
-**Trade-offs Considered**:
-* **Separate fields**: Rejected due to increased storage overhead and query complexity
-* **String-based keys**: Rejected due to memory overhead and comparison cost
-* **128-bit UUIDs**: Rejected due to storage overhead and lack of volume locality
+* Single 64‑bit key → efficient storage, comparison, and hashing.
+* Facilitates fast field filters in Tantivy (e.g. per‑volume filtering).
+* Human‑readable formatting helps debugging/logging.
+* Enables range queries scoped to volume ranges.
 
-### Document Types
+**Trade‑offs considered**
 
-UltraSearch maintains two distinct index types with different schemas and update frequencies. This separation is fundamental to the architecture.
+* **Separate fields** – more storage and more complex queries. Rejected.
+* **String keys** – huge memory and comparison overhead. Rejected.
+* **128‑bit UUIDs** – bigger and lose volume locality. Rejected.
 
-#### Metadata Documents (meta-index)
+### 3.2 Document types
+
+UltraSearch maintains **two indices**:
+
+* **Metadata index** (for filenames and attributes).
+* **Content index** (for full‑text content).
+
+Each has its own schema and update cadence.
+
+#### 3.2.1 Metadata documents (meta‑index)
 
 Optimized for filename and attribute queries with minimal storage overhead.
 
@@ -327,163 +549,216 @@ Optimized for filename and attribute queries with minimal storage overhead.
 ┌─────────────────────────────────────────────────────────┐
 │ Metadata Document Schema                                │
 ├─────────────────────────────────────────────────────────┤
-│ doc_key:    u64  FAST + STORED  Primary key            │
-│ volume:     u16  FAST           Per-volume filtering   │
-│ name:       TEXT Indexed         Filename search        │
-│ path:       TEXT Indexed         Path search            │
-│ ext:        STRING FAST          Extension filter       │
-│ size:       u64  FAST            Size range queries    │
-│ created:    i64  FAST            Creation time          │
-│ modified:   i64  FAST            Modification time      │
-│ flags:      u64  FAST            Attribute bitfield    │
+│ doc_key:    u64  FAST + STORED  Primary key             │
+│ volume:     u16  FAST           Per-volume filtering    │
+│ name:       TEXT Indexed        Filename search         │
+│ path:       TEXT Indexed        Path search             │
+│ ext:        STRING FAST         Extension filter        │
+│ size:       u64  FAST           Size range queries      │
+│ created:    i64  FAST           Creation time           │
+│ modified:   i64  FAST           Modification time       │
+│ flags:      u64  FAST           Attribute bitfield      │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Field Details**:
+**Field details**
 
-* **doc_key**: Primary key enabling efficient delete/update operations. Stored as fast field for filtering without document retrieval.
-* **volume**: Enables per-volume query filtering using fast field lookups. Critical for multi-volume systems.
-* **name**: Tokenized with separators `[\ / . - _]` to support partial matching. Analyzer tuned for filename patterns.
-* **path**: Optional field; can be reconstructed from directory tree or stored for convenience. Tokenized by directory separators.
-* **ext**: Keyword field enabling exact extension matching. Fast field for efficient filtering.
-* **size**: Enables range queries for file size filtering. Stored as u64 to support files up to 16 exabytes.
-* **created/modified**: Unix timestamps (seconds) enabling time-range queries. Fast fields for efficient filtering.
-* **flags**: Bitfield encoding file attributes:
-  * `IS_DIR`: Directory flag
-  * `HIDDEN`: Hidden file attribute
-  * `SYSTEM`: System file attribute
-  * `ARCHIVE`: Archive bit
-  * `REPARSE`: Reparse point (symlink/junction)
-  * `OFFLINE`: Offline file
-  * `TEMPORARY`: Temporary file
+* `doc_key` – primary key; FAST field for efficient deletes/updates and filtering.
+* `volume` – FAST field for per‑volume scoping.
+* `name`
 
-**Typical Document Size**: 100-500 bytes per file (depends on path length)
+  * Tokenized on `[\ / . - _]`.
+  * Supports partial and prefix matches on filenames.
+* `path`
 
-**Update Frequency**: Immediate on file system changes via USN journal
+  * Tokenized on directory separators.
+  * Optional because path can be reconstructed, but useful for ranking/snippets.
+* `ext`
 
-#### Content Documents (content-index)
+  * STRING + FAST for exact extension filters (`ext:pdf`, `ext:rs`).
+* `size`
 
-Full-text content extracted from files, updated only during background indexing.
+  * `u64` for size range queries up to multi‑exabyte files.
+* `created` / `modified`
+
+  * Unix timestamps; FAST fields for range filters (e.g. “modified last 7 days”).
+* `flags`
+
+  * Bitfield encoding attributes like:
+
+    * `IS_DIR`, `HIDDEN`, `SYSTEM`, `ARCHIVE`, `REPARSE`, `OFFLINE`, `TEMPORARY`.
+
+**Typical document size**
+
+* ~100–500 bytes per file (path length dominates).
+
+**Update frequency**
+
+* Updated **immediately** on file system changes via the USN journal.
+
+#### 3.2.2 Content documents (content‑index)
+
+Full‑text content extracted from files, updated only in background.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ Content Document Schema                                 │
 ├─────────────────────────────────────────────────────────┤
 │ doc_key:      u64  FAST + STORED  Correlates with meta │
-│ volume:       u16  FAST            Per-volume filtering │
-│ name:         TEXT Indexed         Name boost           │
-│ path:         TEXT STORED          Snippet context     │
-│ ext:          STRING FAST          Format filter        │
-│ size:         u64  FAST            Size filter         │
-│ modified:     i64  FAST            Recency boost        │
-│ content_lang: STRING STORED        Analyzer selection   │
-│ content:      TEXT Indexed         Full-text search     │
+│ volume:       u16  FAST           Per-volume filtering  │
+│ name:         TEXT Indexed        Name boost            │
+│ path:         TEXT STORED         Snippet context       │
+│ ext:          STRING FAST         Format filter         │
+│ size:         u64  FAST           Size filter           │
+│ modified:     i64  FAST           Recency boost         │
+│ content_lang: STRING STORED       Analyzer selection    │
+│ content:      TEXT Indexed        Full-text search      │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Field Details**:
+**Field details**
 
-* **doc_key**: Correlates with metadata index, enabling result merging and metadata lookup
-* **content**: Main full-text field with default English analyzer (tokenization + stopwords + stemming)
-* **content_lang**: Language code (ISO 639-1) for analyzer selection. Enables per-language tokenization.
-* **name/path**: Included for ranking boost; name matches weighted higher than content matches
+* `doc_key` – correlation key to metadata index.
+* `content` – main full‑text field, with language‑appropriate analyzer.
+* `content_lang` – ISO‑639‑1 language code; used to pick analyzers.
+* `name` / `path` – used to boost ranking for filename/path matches.
 
-**Typical Document Size**: Varies widely (truncated at configurable limits: 16-32 MiB, 100-200k chars)
+**Typical document size**
 
-**Update Frequency**: Only during background indexing when system is idle
+* Varies widely; content truncated at configurable limits (~16–32 MiB, ~100–200k chars).
 
-### Why Separate Indices?
+**Update frequency**
 
-This architectural decision is fundamental to UltraSearch's efficiency. Several alternatives were considered:
+* Only during **background indexing**, when the scheduler decides conditions are safe.
 
-**Alternative 1: Single Unified Index**
-* **Pros**: Simpler architecture, single query path
-* **Cons**: 
-  * Content updates require touching large index
-  * Service must hold content index reader (memory overhead)
-  * Cannot disable content indexing without affecting metadata
-* **Verdict**: Rejected due to memory and update frequency mismatches
+### 3.3 Why two separate indices?
 
-**Alternative 2: Three Indices (Meta, Content, Combined)**
-* **Pros**: Flexibility in query routing
-* **Cons**: 
-  * Data duplication increases storage overhead
-  * Consistency challenges across three indices
-  * Increased complexity in update logic
-* **Verdict**: Rejected due to complexity and storage overhead
+This is one of the key design decisions.
 
-**Chosen Approach: Two Separate Indices**
+**Alternative 1 – single unified index**
 
-**Benefits**:
-1. **Update Frequency Mismatch**: Metadata changes frequently (renames, moves, attribute changes) while content changes less often. Separating them allows metadata updates without touching the larger content index.
-2. **Query Patterns**: Filename searches are far more common than content searches. Keeping metadata separate enables faster queries for the common case.
-3. **Memory Footprint**: The service can operate with only the metadata index loaded, keeping memory usage minimal. Content index is opened only when needed for content queries.
-4. **Indexing Strategy**: Content extraction is resource-intensive and runs in separate worker processes. Metadata indexing is lightweight and can run in the service process.
-5. **Failure Isolation**: Corruption or issues with content index don't affect metadata search capabilities.
+* Pros:
 
-**Trade-offs**:
-* **Result Merging**: Hybrid queries require merging results from both indices. This adds complexity but enables optimal query routing.
-* **Consistency**: Two indices can theoretically diverge. Mitigated by using DocKey as correlation key and atomic updates per index.
+  * Single index, single query path.
+* Cons:
 
-## NTFS Integration
+  * Content updates touch a large index.
+  * Service must keep content reader open (higher memory baseline).
+  * Can’t “turn off” content indexing without impacting metadata.
+* Verdict: **Rejected** due to mismatched update patterns and memory impact.
 
-UltraSearch leverages Windows NTFS primitives directly rather than recursive directory traversal. This approach provides several fundamental advantages that cannot be achieved through traditional file system APIs.
+**Alternative 2 – three indices (meta, content, combined)**
 
-### Volume Discovery
+* Pros:
 
-The volume discovery process runs at service startup and whenever volumes are added or removed. It uses Windows volume enumeration APIs to identify NTFS volumes.
+  * Flexible routing/optimizations.
+* Cons:
 
-**Process Flow**:
+  * Data duplication and higher storage cost.
+  * Consistency challenges across three indices.
+  * Complex update logic.
+* Verdict: **Rejected** as over‑complex.
+
+**Chosen approach – two separate indices**
+
+Benefits:
+
+1. **Update frequency mismatch**
+
+   * Metadata changes often (renames, moves, flags).
+   * Content changes less often; sometimes never.
+   * Separate indices let us update metadata cheaply without touching content.
+
+2. **Query patterns**
+
+   * Filename searches are much more common than content searches.
+   * A lean metadata index keeps common queries extremely fast.
+
+3. **Memory footprint**
+
+   * Service can operate with only the meta index loaded by default.
+   * Content index readers are opened lazily as needed.
+
+4. **Indexing strategy**
+
+   * Metadata indexing is cheap and can run in the service.
+   * Content extraction is heavy and moved into worker processes.
+
+5. **Failure isolation**
+
+   * Content index issues don’t impair filename search.
+   * Rebuilding content index doesn’t require touching metadata.
+
+Trade‑offs:
+
+* **Result merging** – hybrid queries must merge results from two indices (by `DocKey`).
+* **Consistency** – two stores can diverge; mitigated by `DocKey` as the single source of truth and atomic per‑index updates.
+
+---
+
+## 4. Deep NTFS Integration
+
+UltraSearch is deeply NTFS‑specific by design.
+
+### 4.1 Volume discovery
+
+At service startup (and when volumes change), UltraSearch discovers NTFS volumes.
+
+**Simplified algorithm**
 
 ```rust
-// Simplified discovery algorithm
-1. GetLogicalDrives() → enumerate drive letters
-2. For each drive:
-   a. GetVolumeInformationW() → check filesystem type
-   b. Filter to NTFS volumes only
-   c. GetVolumeNameForVolumeMountPointW() → resolve GUID path
-   d. Map drive letters to volume GUIDs
+// Pseudocode, not exact implementation:
+
+1. GetLogicalDrives() → bitmask of drive letters
+2. For each drive letter:
+   a. GetVolumeInformationW() → filesystem type
+   b. Filter to "NTFS"
+   c. GetVolumeNameForVolumeMountPointW() → volume GUID path
+   d. Track mapping: drive letters ↔ GUID
 3. Assign VolumeId sequentially
-4. Store mapping in persistent state
+4. Persist mapping in volume state files
 ```
 
-**Design Decision: Volume GUID Paths vs Drive Letters**
+**Volume GUID paths vs drive letters**
 
-We use volume GUID paths (`\\?\Volume{...}\`) rather than drive letters because:
+UltraSearch uses **volume GUID paths** like `\\?\Volume{GUID}\` instead of `C:\`:
 
-* **Stability**: GUIDs persist across reboots and drive letter reassignments
-* **Mount Points**: Multiple drive letters can map to the same volume (mount points)
-* **No Drive Letter**: Volumes can exist without assigned drive letters
-* **Uniqueness**: GUIDs are globally unique, eliminating ambiguity
+* **Stable** across reboots and letter reassignments.
+* Support **mount points** where multiple letters map to a single volume.
+* Volumes may exist **without any drive letter**.
+* GUIDs are globally unique.
 
-**Example Volume Mapping**:
-```
-VolumeId: 1
-GUID Path: \\?\Volume{12345678-1234-1234-1234-123456789abc}\
+Example:
+
+```text
+VolumeId:      1
+GUID Path:     \\?\Volume{12345678-1234-1234-1234-123456789abc}\
 Drive Letters: ["C:", "D:"]
 ```
 
-### MFT Enumeration
+### 4.2 MFT enumeration
 
-The Master File Table (MFT) is NTFS's core data structure containing metadata for every file and directory. UltraSearch uses `usn-journal-rs` to enumerate MFT records efficiently.
+The MFT is NTFS’s global table of file records. UltraSearch enumerates it directly via `usn-journal-rs`.
 
-**MFT Structure** (simplified):
+**Highly simplified MFT record layout**
+
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ MFT Record (1024 bytes typical)                        │
+│ MFT Record (≈1024 bytes)                               │
 ├─────────────────────────────────────────────────────────┤
 │ Header: Record number, sequence, flags                  │
 │ Attributes:                                             │
-│   - $STANDARD_INFORMATION: Timestamps, attributes       │
-│   - $FILE_NAME: Filename, parent FRN                   │
-│   - $DATA: File content (or stream info)                │
-│   - $BITMAP: Allocation status                         │
+│   - $STANDARD_INFORMATION: timestamps, attributes       │
+│   - $FILE_NAME: filename, parent FRN                    │
+│   - $DATA: file data / streams                          │
+│   - $BITMAP: allocation info                            │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Enumeration Process**:
+**Enumeration steps**
 
-1. **Open Volume Handle**: 
+1. Open a volume handle:
+
    ```rust
    CreateFileW(
        volume_guid_path,
@@ -493,190 +768,192 @@ The Master File Table (MFT) is NTFS's core data structure containing metadata fo
    )
    ```
 
-2. **Iterate MFT Records**:
-   * Use `usn-journal-rs` iterator to enumerate records
-   * For each record:
-     * Extract File Reference Number (FRN), parent FRN
-     * Extract file name, flags, size, timestamps
-     * Filter out inaccessible system files (configurable patterns)
-     * Resolve FRN to full path using `usn-journal-rs` utilities
+2. Use `usn-journal-rs` to iterate MFT records:
 
-3. **Stream to Index Builder**:
-   * Construct `FileMeta` from MFT record
-   * Stream directly to metadata index builder (no buffering)
-   * Periodic commits (every 100k docs or 30s) ensure progress
+   * Extract FRN, parent FRN.
+   * Read file name, flags, size, timestamps.
+   * Filter out system/inaccessible entries per configuration.
+   * Resolve FRN→path via parent graph with a small LRU cache.
 
-**Performance Characteristics**:
+3. Stream `FileMeta` into the metadata index builder:
 
-* **Enumeration Rate**: 100k-1M files/second (depends on disk speed and MFT fragmentation)
-* **Memory Usage**: Minimal; streaming approach avoids buffering entire filesystem
-* **Path Resolution**: On-demand using `usn-journal-rs` utilities; small LRU cache for acceleration
+   * No “whole filesystem in memory” structure.
+   * Periodic commits (e.g. every 100k docs or 30s).
 
-**Why MFT Enumeration Over Directory Traversal?**
+**Performance characteristics**
 
-| Approach | Complexity | Speed | Completeness | Memory |
-|----------|-----------|-------|--------------|--------|
-| **MFT Enumeration** | O(n) where n = files | 100k-1M files/s | Complete (includes inaccessible files) | Minimal (streaming) |
-| **Directory Traversal** | O(n × d) where d = depth | 1k-10k files/s | Incomplete (misses inaccessible) | High (directory tree) |
+* **Enumeration rate**: ~100k–1M files/sec (disk‑dependent).
+* **Memory usage**: low; the design is fully streaming.
+* **Path resolution**: assisted by `usn-journal-rs` helpers + LRU cache.
 
-**Trade-offs**:
-* **Pros**: Orders of magnitude faster, complete coverage, minimal memory
-* **Cons**: Requires elevated privileges, Windows-specific, more complex error handling
+**Why MFT enumeration instead of directory traversal?**
 
-### USN Journal Tailing
+| Approach                | Complexity   | Speed     | Coverage                            | Memory         |
+| ----------------------- | ------------ | --------- | ----------------------------------- | -------------- |
+| **MFT enumeration**     | O(n files)   | 100k–1M/s | Complete (even system/inaccessible) | Very low       |
+| **Directory traversal** | O(n × depth) | 1k–10k/s  | Incomplete (miss hidden/system)     | Higher (trees) |
 
-The Update Sequence Number (USN) Change Journal tracks all file system changes. UltraSearch tails this journal to detect changes incrementally without rescanning.
+* MFT access is **designed** for exactly this type of global scan.
+* Directory walkers are convenient but fundamentally limited.
 
-**USN Journal Structure**:
+### 4.3 USN journal tailing
+
+The USN Change Journal is NTFS’s append‑only record of filesystem changes. UltraSearch tails it per volume.
+
+**Journal metadata (simplified)**
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ USN Journal Data                                        │
 ├─────────────────────────────────────────────────────────┤
-│ UsnJournalID:     Unique journal identifier            │
-│ FirstUsn:         Oldest record in journal            │
-│ NextUsn:          Next USN to be assigned              │
-│ LowestValidUsn:    Oldest valid USN                    │
-│ MaxUsn:           Maximum USN value                    │
+│ UsnJournalID:     unique journal ID                     │
+│ FirstUsn:         oldest record                         │
+│ NextUsn:          next USN to be assigned               │
+│ LowestValidUsn:   oldest valid record                   │
+│ MaxUsn:           maximum possible USN                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Architecture**:
+**Architecture**
 
-* Per-volume worker thread in service process
-* Opens journal via `CreateFileW` on volume GUID path
-* Uses `FSCTL_QUERY_USN_JOURNAL` and `FSCTL_READ_USN_JOURNAL` (encapsulated by `usn-journal-rs`)
-* Maintains `last_usn` and `journal_id` per volume in persistent state files
+* One **watcher thread per volume** in the service.
+* Uses `FSCTL_QUERY_USN_JOURNAL` / `FSCTL_READ_USN_JOURNAL` via `usn-journal-rs`.
+* Stores `(journal_id, last_usn)` per volume in `VolumeState`.
 
-**Change Event Types**:
+**Event model**
 
 ```rust
 pub enum FileEvent {
-    Created { usn: u64, frn: u64, name: String, parent_frn: u64 },
-    Deleted { usn: u64, frn: u64 },
+    Created  { usn: u64, frn: u64, name: String, parent_frn: u64 },
+    Deleted  { usn: u64, frn: u64 },
     Modified { usn: u64, frn: u64 },
-    Renamed { usn: u64, frn: u64, old_name: String, new_name: String, parent_frn: u64 },
-    BasicInfoChanged { usn: u64, frn: u64 }, // Attributes, timestamps, permissions
+    Renamed  { usn: u64, frn: u64, old_name: String, new_name: String, parent_frn: u64 },
+    BasicInfoChanged { usn: u64, frn: u64 }, // attrs, timestamps, ACLs
 }
 ```
 
-**Change Gap Handling**:
+**Handling journal gaps**
 
-On startup, compare stored `journal_id` and `last_usn` with current journal state:
+On startup, UltraSearch compares persisted state to current journal:
 
-* **Journal Wrap**: If `last_usn` lies outside `[FirstUsn, NextUsn]`, journal has wrapped
-* **Journal Recreate**: If `journal_id` changed, journal was recreated (volume reformatted)
-* **Recovery**: In either case, mark volume as stale and schedule incremental MFT walkthrough
+* If `journal_id` changed → journal recreated (e.g. volume reformat).
+* If `last_usn` is outside `[FirstUsn, NextUsn]` → journal wrapped.
+* In both cases, volume is marked **stale** and scheduled for **incremental rescan**.
 
-**Why USN Journal Over File System Watchers?**
+**Why USN instead of `ReadDirectoryChangesW`?**
 
-| Feature | USN Journal | ReadDirectoryChangesW |
-|---------|-------------|---------------------|
-| **Completeness** | Complete change history | Buffer overflow risk |
-| **Persistence** | Survives reboots | Lost on service restart |
-| **Performance** | Single volume handle | Per-directory handles |
-| **Reliability** | No buffer overflows | Buffer overflow issues |
-| **Coverage** | All changes | Only watched directories |
+| Feature               | USN Journal       | ReadDirectoryChangesW                  |
+| --------------------- | ----------------- | -------------------------------------- |
+| Completeness          | Total history     | Can lose events (buffer overflow)      |
+| Persistence           | Survives reboot   | Volatile                               |
+| Handles               | Single per volume | One per watched directory tree         |
+| Missed events on down | Recoverable       | Permanently lost                       |
+| High change rates     | Robust            | Buffer overflow, dropped notifications |
 
-**Design Rationale**:
-* File system watchers (`ReadDirectoryChangesW`) have fundamental limitations:
-  * Buffer overflow issues with high change rates
-  * Miss changes during service downtime
-  * Require maintaining directory handles
-* USN journal provides complete, reliable change history
-* No buffer overflows; journal persists across reboots
-* Single volume handle instead of per-directory handles
+USN is simply the **correct primitive** for robust incremental indexing.
 
-## Indexing Architecture
+---
 
-UltraSearch uses Tantivy 0.24.x as its search engine, chosen after evaluating several alternatives. The decision was driven by performance, memory efficiency, and Rust-native implementation.
+## 5. Search Engine and Indexing Architecture
 
-### Why Tantivy?
+UltraSearch uses **Tantivy 0.24.x** as its search engine, chosen after comparing Rust and non‑Rust alternatives.
 
-**Evaluation Matrix**:
+### 5.1 Why Tantivy?
 
-| Engine | Language | Performance | Memory | Rust Integration | Maintenance |
-|--------|----------|-------------|--------|------------------|-------------|
-| **Tantivy** | Rust | Excellent | Efficient | Native | Active |
-| Lucene | Java | Excellent | Higher | FFI required | Active |
-| Bleve | Go | Good | Moderate | FFI required | Active |
-| Meilisearch | Rust | Good | Higher | Native | Active |
+Comparison snapshot:
 
-**Decision Factors**:
+| Engine      | Language | Performance | Memory    | Rust integration | Notes               |
+| ----------- | -------- | ----------- | --------- | ---------------- | ------------------- |
+| **Tantivy** | Rust     | Excellent   | Efficient | Native           | Actively maintained |
+| Lucene      | Java     | Excellent   | Higher    | FFI required     | De‑facto standard   |
+| Bleve       | Go       | Good        | Moderate  | FFI required     | Mature Go option    |
+| Meilisearch | Rust     | Good        | Higher    | Native           | Bundled server      |
 
-1. **Rust-Native**: No FFI overhead, better memory safety guarantees, seamless integration
-2. **Performance**: Competitive with or faster than Lucene in benchmarks
-3. **Memory Efficiency**: CompactDoc format reduces memory usage significantly
-4. **Active Development**: Well-maintained with modern Rust best practices
-5. **Feature Completeness**: Supports all required query types and indexing strategies
+Decision factors:
 
-### Tantivy Index Schema
+1. **Rust‑native implementation**
 
-Both metadata and content indices use Tantivy 0.24.x with CompactDoc format for memory efficiency.
+   * No FFI boundary, single toolchain, shared ecosystem.
+2. **Performance**
 
-#### Metadata Index Schema
+   * Competitive with Lucene in many workloads.
+3. **Memory efficiency**
 
-```rust
-// Field definitions with indexing options
-doc_key: u64      // FAST | STORED  (primary key for delete/update)
-volume: u16       // FAST            (per-volume query filtering)
-name: TEXT        // Indexed with tokenizer supporting [\ / . - _]
-path: TEXT        // Optional; can be reconstructed or stored
-ext: STRING       // Keyword field, FAST (exact extension matching)
-size: u64         // FAST            (range queries for file size filtering)
-created: i64      // FAST            (timestamp range queries)
-modified: i64     // FAST            (timestamp range queries)
-flags: u64        // FAST            (bitfield: is_dir, hidden, system, etc.)
-```
+   * CompactDoc format is well‑suited to large indices.
+4. **Feature set**
 
-**Field Type Rationale**:
+   * Fast fields, scoring models, analyzers, and range queries.
+5. **Active maintenance**
 
-* **FAST fields**: Stored in columnar format, enabling efficient range queries and filtering without document retrieval. Critical for performance.
-* **STORED fields**: Available for retrieval without re-reading index segments. Used for primary keys and frequently accessed metadata.
-* **TEXT fields**: Tokenized and indexed for full-text search. Analyzer tuned for filename patterns.
-* **STRING fields**: Stored as-is, enabling exact matching (e.g., file extensions).
+   * Modern Rust style; regularly updated.
 
-**Tokenization Strategy**:
+### 5.2 Tantivy schemas
 
-The `name` field uses a custom tokenizer that splits on common filename separators:
+Both indices use CompactDoc+fast fields aggressively.
 
-```
-Input:  "my-document_v2.pdf"
-Tokens: ["my", "document", "v2", "pdf", "my-document_v2.pdf"]
-```
-
-This enables:
-* Prefix matching: `"my"` matches `"my-document"`
-* Partial matching: `"doc"` matches `"document"`
-* Exact matching: Full filename still indexed
-
-#### Content Index Schema
+#### 5.2.1 Metadata index schema (recap)
 
 ```rust
-doc_key: u64           // FAST | STORED  (correlates with metadata index)
-volume: u16            // FAST
-name: TEXT              // Optional; factored into ranking
-path: TEXT              // Stored for snippet context
-ext: STRING             // FAST
-size: u64               // FAST
-modified: i64           // FAST
-content_lang: STRING    // Language code for analyzer selection
-content: TEXT           // Main full-text field with default English analyzer
+doc_key:  u64   // FAST | STORED
+volume:   u16   // FAST
+name:     TEXT  // custom tokenizer for filenames
+path:     TEXT  // optional, tokenized by separators
+ext:      STRING // FAST
+size:     u64   // FAST
+created:  i64   // FAST
+modified: i64   // FAST
+flags:    u64   // FAST
 ```
 
-**Analyzer Strategy**:
+**Field types**
 
-* **Default Analyzer**: English (tokenization + stopwords + stemming)
-* **Per-Language Analyzers**: Selected based on `content_lang` field
-* **Future Enhancement**: Document-type-aware analyzers (code, logs, documents)
+* **FAST** – columnar storage; used heavily for filters and range queries.
+* **STORED** – retrievable fields, not indexed; mostly for IDs.
+* **TEXT** – tokenized, full‑text searchable.
+* **STRING** – raw keyword, exact match.
 
-### Memory Management Strategy
+**Filename tokenization**
 
-UltraSearch employs several strategies to maintain predictable memory usage, critical for a background service.
+Example:
 
-#### Memory-Mapped Storage
+```text
+Input:   "my-document_v2.final.pdf"
+Tokens:  ["my", "document", "v2", "final", "pdf", "my-document_v2.final.pdf"]
+```
 
-Large datasets use memory-mapped storage via `memmap2`:
+This supports:
+
+* Prefix and partial matches (`"doc"` matches `"document"`).
+* Whole‑filename queries (last token).
+* Better recall without bloating the index.
+
+#### 5.2.2 Content index schema (recap)
+
+```rust
+doc_key:      u64    // FAST | STORED
+volume:       u16    // FAST
+name:         TEXT   // boosts ranking
+path:         TEXT   // stored; snippet context
+ext:          STRING // FAST
+size:         u64    // FAST
+modified:     i64    // FAST
+content_lang: STRING // stored
+content:      TEXT   // main full-text field
+```
+
+**Analyzers**
+
+* Default: English analyzer (tokenization + stopwords + stemming).
+* Future: per‑language analyzers based on `content_lang`.
+* Further future: document‑type‑aware analyzers (code, logs, etc.).
+
+### 5.3 Memory management
+
+The indexing stack is engineered to keep memory usage predictable and low.
+
+#### 5.3.1 Memory‑mapped storage
+
+Tantivy segments and certain state blobs use `memmap2`:
 
 ```rust
 use memmap2::{Mmap, MmapOptions};
@@ -684,7 +961,7 @@ use std::fs::File;
 
 pub struct MappedIndex {
     mmap: Mmap,
-    // ... index metadata
+    // ...
 }
 
 impl MappedIndex {
@@ -696,19 +973,16 @@ impl MappedIndex {
 }
 ```
 
-**Benefits**:
-* Leverages OS page cache for frequently accessed data
-* Zero-copy reads where possible
-* Memory usage scales with working set, not total dataset size
-* Automatic eviction by OS when memory pressure occurs
+Benefits:
 
-**Trade-offs**:
-* Initial mapping overhead (negligible for typical use)
-* OS-dependent behavior (generally well-optimized)
+* OS‑level page cache decides what stays resident.
+* Zero‑copy reads.
+* Memory usage scales with **working set**, not total index size.
+* Natural behavior under memory pressure.
 
-#### Zero-Copy Serialization
+#### 5.3.2 Zero‑copy serialization with `rkyv`
 
-Metadata snapshots and volume state files use `rkyv` for zero-copy deserialization:
+Volume state and snapshots are stored using `rkyv`:
 
 ```rust
 use rkyv::{Archive, Deserialize, Serialize};
@@ -721,119 +995,105 @@ pub struct VolumeState {
     // ...
 }
 
-// Serialization
+// Serialize
 let bytes = rkyv::to_bytes::<_, 256>(&state)?;
 
-// Zero-copy deserialization
+// Zero-copy read
 let archived = unsafe { rkyv::archived_root::<VolumeState>(&bytes[..]) };
-let state: &VolumeState = archived.deserialize(&mut Infallible)?;
 ```
 
-**Performance Characteristics**:
-* **Size**: 2-5x smaller than JSON
-* **Speed**: 10-100x faster deserialization
-* **Memory**: Zero-copy access without deserialization overhead
+Characteristics:
 
-#### Index Writer Isolation
+* 2–5x smaller than JSON.
+* 10–100x faster to deserialize.
+* Zero‑copy reads (no reallocation).
 
-Content index writer exists only in worker process:
+#### 5.3.3 Index writer isolation
 
-**Configuration**:
+The **content index writer** lives **only in the worker process**:
+
 ```rust
 let writer_config = WriterConfig {
-    heap_size: 64 * 1024 * 1024,  // 64 MB heap
-    num_threads: 2,                 // Parallel indexing
+    heap_size: 64 * 1024 * 1024, // 64 MB
+    num_threads: 2,
     // ...
 };
 let writer = index.writer_with_config(writer_config)?;
 ```
 
-**Benefits**:
-* Worker exits immediately after commit, releasing all allocations
-* Service never holds writer-specific state
-* Bounded memory usage per worker
-* Multiple workers can run concurrently without exhausting memory
+Benefits:
 
-**Trade-offs**:
-* More frequent commits and merges
-* Worker spawn overhead (mitigated by batching)
+* Worker exit ⇒ all writer allocations vanish.
+* Bound per‑worker memory via `heap_size`.
+* Multiple workers can run without starving the system.
 
-#### Reader Configuration
+Trade‑off: more frequent commits/merges, but far more predictable memory behavior.
 
-Service maintains lightweight IndexReader instances:
+#### 5.3.4 Reader configuration in the service
+
+The service maintains **lightweight readers**:
 
 ```rust
 let reader = index
     .reader_builder()
-    .reload_policy(ReloadPolicy::Manual)  // Avoid unnecessary reloads
-    .num_warmers(0)                        // Minimal warmup
-    .docstore_cache_size(10 * 1024 * 1024) // 10 MB cache
+    .reload_policy(ReloadPolicy::Manual)
+    .num_warmers(0)
+    .docstore_cache_size(10 * 1024 * 1024)
     .build()?;
 ```
 
-**Configuration Rationale**:
-* **Manual Reload Policy**: Avoids unnecessary reloads; service controls when to refresh
-* **Zero Warmers**: Reduces startup overhead; OS page cache handles frequently accessed segments
-* **Small Cache**: Minimal in-process cache; relies on OS page cache for bulk data
+Rationale:
 
-### Index Writer Tuning
+* **Manual reload** – avoid automatic reload storms; service explicitly reloads on commits.
+* **Zero warmers** – minimal overhead at startup; rely on OS cache.
+* **Small docstore cache** – keep reader memory small and rely on mmap.
 
-Tantivy index writers are configured differently for metadata and content indices based on their usage patterns.
+### 5.4 Writer tuning per index
 
-#### Metadata Index Writer
-
-Used only during initial build and rare rebuilds:
+#### Metadata index writer (initial build / rebuild)
 
 ```rust
 WriterConfig {
-    heap_size: 512 * 1024 * 1024,  // 512 MB (if machine has RAM)
-    num_threads: min(8, num_cpus()), // Parallel indexing
+    heap_size: 512 * 1024 * 1024,     // up to 512 MB
+    num_threads: min(8, num_cpus()),
     merge_policy: LogMergePolicy {
-        target_segment_size: 256 * 1024 * 1024,  // 256 MB segments
-        max_merged_segment_size: 1024 * 1024 * 1024,  // 1 GB max
+        target_segment_size: 256 * 1024 * 1024,
+        max_merged_segment_size: 1024 * 1024 * 1024,
     },
 }
 ```
 
-**Rationale**:
-* Large heap enables efficient batching during initial build
-* Parallel indexing leverages multiple CPU cores
-* Larger segments reduce merge frequency
+* Aggressively parallelized and memory‑heavy **only during initial build**.
+* Large segments reduce merge overhead later.
 
-#### Content Index Writer
-
-Used in worker processes with bounded memory:
+#### Content index writer (worker processes)
 
 ```rust
 WriterConfig {
-    heap_size: 64 * 1024 * 1024,   // 64-256 MB (configurable)
-    num_threads: 2,                  // 2-4 threads
+    heap_size: 64 * 1024 * 1024,      // 64–256 MB configurable
+    num_threads: 2,                   // small, predictable
     merge_policy: LogMergePolicy {
-        target_segment_size: 128 * 1024 * 1024,  // 128 MB segments
-        max_merged_segment_size: 256 * 1024 * 1024,  // 256 MB max
+        target_segment_size: 128 * 1024 * 1024,
+        max_merged_segment_size: 256 * 1024 * 1024,
     },
 }
 ```
 
-**Rationale**:
-* Bounded heap prevents worker from consuming excessive memory
-* Fewer threads reduce contention and memory spikes
-* Smaller segments enable more frequent commits
+Why bounded heap?
 
-**Why Bounded Heap Size?**
+* Prevents a single worker from blowing up memory.
+* Supports multiple concurrent workers safely.
+* Makes worst‑case behavior more predictable.
 
-* **Prevents Memory Exhaustion**: Worker process cannot consume excessive memory
-* **Concurrent Workers**: Multiple workers can run without exhausting system memory
-* **Predictable Behavior**: Memory usage remains within configured bounds
-* **Trade-off**: More frequent commits and merges, but predictable memory usage
+---
 
-## Content Extraction
+## 6. Content Extraction Stack
 
-UltraSearch supports multiple extraction backends with automatic fallback. The extraction system is designed to handle a wide variety of file formats while maintaining low memory usage.
+UltraSearch’s content extractor stack is designed to be **pluggable**, **ordered**, and **resource‑bounded**.
 
-### Extractor Architecture
+### 6.1 Extractor architecture
 
-The extraction system uses a trait-based design with ordered fallback:
+Core traits:
 
 ```rust
 pub trait Extractor: Send + Sync {
@@ -847,104 +1107,94 @@ pub struct ExtractorStack {
 }
 ```
 
-**Extraction Flow**:
+Flow:
 
-1. Iterate through extractor stack in order
-2. First extractor that claims support (`supports()` returns true) handles the file
-3. If extraction fails, error is returned (no fallback to next extractor)
-4. Result includes text, language hints, truncation flag, and bytes processed
+1. Iterate `backends` in order.
+2. First backend where `supports()` returns true handles the file.
+3. If extraction fails, error bubbles up (no cross‑backend fallback cascade).
+4. Return text, language hints, truncation flags, bytes processed.
 
-**Why Ordered Fallback?**
+Why ordered fallback?
 
-* **Performance**: Try fastest extractors first (SimpleText before Extractous)
-* **Specificity**: More specific extractors (IFilter for Office) before general ones
-* **Resource Usage**: Lightweight extractors before resource-intensive ones
+* Try **cheaper/faster** extractors first (plain text, lightweight parsers).
+* Reserve heavyweight Extractous/IFilter/OCR for when really needed.
+* Let highly specific extractors win over more generic ones.
 
-### Extractous Integration
+### 6.2 Extractous integration
 
-Extractous is the primary extraction engine, providing support for Apache Tika formats.
+Extractous is the primary backend; it exposes Apache Tika functionality via Rust.
 
-**Supported Formats**:
+**Supported families**
 
-* **Documents**: PDF, Word (docx), Excel (xlsx), PowerPoint (pptx), RTF
-* **Web**: HTML, XML, XHTML
-* **Archives**: ZIP (with format whitelist)
-* **Data**: CSV, JSON, JSONL
-* **E-books**: EPUB
-* **Markup**: Markdown, reStructuredText
+* Documents: `pdf`, `docx`, `xlsx`, `pptx`, `rtf`.
+* Web/markup: `html`, `xml`, `xhtml`, `md`, `rst`.
+* Archives: `zip` (with internal whitelist).
+* Data: `csv`, `json`, `jsonl`.
+* E‑books: `epub`.
+* Misc: many generic text formats.
 
-**Performance Characteristics**:
-
-* **Speed**: 10-18x speedups vs Python alternatives in benchmarks
-* **Memory**: ~11x lower memory usage compared to some alternatives
-* **Implementation**: Internal use of Tika bits with GraalVM, but exposed as safe Rust APIs
-
-**Usage Pattern**:
+Usage sketch:
 
 ```rust
 let engine = ExtractousEngine::new()
     .set_extract_string_max_length(max_chars as i32);
+
 let (text, metadata) = engine.extract_file_to_string(path)?;
 ```
 
-**Why Extractous Over Alternatives?**
+Why Extractous?
 
-| Engine | Language | Formats | Performance | Memory | Maintenance |
-|--------|----------|---------|-------------|--------|-------------|
-| **Extractous** | Rust | Tika-compatible | Excellent | Low | Active |
-| Apache Tika | Java | Comprehensive | Good | Higher | Active |
-| python-docx | Python | Limited | Moderate | Moderate | Active |
-| LibreOffice | C++ | Office | Good | Higher | Active |
+* Rust‑native: no separate Java runtime or FFI bridging.
+* Tika‑level format coverage.
+* Strong performance and memory characteristics vs Python/CLI‑based chains.
 
-**Decision Factors**:
-* **Rust-Native**: No FFI overhead, better memory safety
-* **Format Coverage**: Apache Tika compatibility provides wide format support
-* **Performance**: Significantly faster than Python-based alternatives
-* **Memory Efficiency**: Lower memory usage than many alternatives
+### 6.3 Optional IFilter COM integration
 
-### IFilter COM Integration (Optional)
+On Windows, system‑installed IFilters can be used for certain file types.
 
-Windows COM IFilter interface provides access to system-installed filters:
+When:
 
-**When Used**:
-* File types Extractous doesn't support
-* System-installed filters with better fidelity (e.g., proprietary Office formats)
-* Fallback when Extractous extraction fails
+* Extractous doesn’t support the format.
+* A proprietary IFilter offers better fidelity (e.g., some Office variants).
+* Users explicitly enable `ifilter` support.
 
-**Implementation**:
+Sketch:
 
 ```rust
 #[cfg(windows)]
 use windows::Win32::System::Com::{IPersistFile, IFilter};
 
-pub struct IFilterExtractor {
-    // COM interface wrappers
-}
+pub struct IFilterExtractor { /* COM wrappers */ }
 
 impl Extractor for IFilterExtractor {
     fn extract(&self, ctx: &ExtractContext, key: DocKey) -> Result<ExtractedContent> {
         let filter = LoadIFilter(ctx.path)?;
-        // Iterate chunks via GetChunk/GetText
-        // ...
+        // Iterate chunks via GetChunk/GetText...
+        Ok(ExtractedContent { /* ... */ })
     }
 }
 ```
 
-**Trade-offs**:
-* **Pros**: Access to system-installed filters, better compatibility
-* **Cons**: COM overhead, STA thread requirements, platform-specific
-* **Decision**: Gated behind feature flag due to COM/STA requirements
+Trade‑offs:
 
-### OCR Integration
+* Pros: leverages existing system filters.
+* Cons: COM lifetime rules, STA threading, platform‑specific complexity.
+* Exposed behind **feature flags**, not mandatory.
 
-For scanned PDFs and images, UltraSearch integrates Tesseract OCR:
+### 6.4 OCR integration
 
-**Detection Strategy**:
-* Detect if document is image-only (no text from Extractous)
-* Run Tesseract on each page up to configurable limit
-* Merge recognized text and mark `content_lang` field
+For image‑only PDFs or actual image files, UltraSearch can optionally use Tesseract OCR.
 
-**Implementation**:
+Strategy:
+
+* Attempt normal extraction first.
+* If result is empty/near‑empty but file type suggests a scan:
+
+  * Run Tesseract for up to `ocr_max_pages`.
+  * Merge recognized text into `content`.
+  * Set `content_lang` based on OCR detection.
+
+Sketch:
 
 ```rust
 pub struct OCRExtractor {
@@ -968,45 +1218,46 @@ impl Extractor for OCRExtractor {
 }
 ```
 
-**Resource Limits**:
-* Configurable per-document type limits
-* Can disable OCR entirely via configuration
-* Respects overall `max_chars` limit
+All OCR work is subject to global resource limits (see below).
 
-### Resource Limits and Streaming
+### 6.5 Resource limits and streaming
 
-To maintain low memory usage, UltraSearch enforces strict limits:
+To keep workers bounded:
 
-**Document Limits**:
-* `max_bytes_per_file`: 16-32 MiB default (configurable)
-* `max_chars`: 100-200k characters per document
-* Truncation occurs at character boundaries to avoid corrupting UTF-8
+* **Per‑document limits**
 
-**Archive Policies**:
-* Only index whitelisted formats inside ZIPs
-* Limit recursion depth
-* Skip encrypted archives
+  * `max_bytes_per_file` (default: 16–32 MiB).
+  * `max_chars_per_file` (default: 100–200k).
+* **Behavior when exceeded**
 
-**Streaming Extraction**:
-* Where Extractous or backends support it, stream pages instead of concatenating
-* Use `String` buffers per file with reserved capacity up to `max_chars`
-* Beyond limit, discard remainder or treat as truncated
+  * Truncate on UTF‑8 boundaries.
+  * Flag document as truncated.
+* **Archive policies**
 
-**Why These Limits?**
+  * Only index whitelisted formats inside archives.
+  * Cap recursion depth.
+  * Skip encrypted archives.
+* **Streaming**
 
-* **Prevents Memory Exhaustion**: Worker process cannot consume excessive memory
-* **Large Documents**: Rarely need full content indexed (user can open file for details)
-* **Trade-off**: Some content may be truncated, but memory usage remains predictable
+  * Where possible, process data in streaming fashion rather than slurping everything into RAM.
 
-## Scheduler and Background Execution
+Motivation:
 
-The scheduler implements intelligent resource-aware job execution. This ensures indexing occurs only when the system can spare resources, preventing interference with user activity.
+* Prevent single pathological files from destabilizing workers.
+* Make worst‑case memory usage predictable.
+* Accept a controlled amount of truncation for massive files.
 
-### Idle Detection
+---
 
-UltraSearch uses Windows `GetLastInputInfo` API to detect user activity:
+## 7. Scheduler and Background Execution
 
-**Implementation**:
+The scheduler decides **when** and **how much** work gets done, based on UI idle time and system load.
+
+### 7.1 Idle detection
+
+UltraSearch uses `GetLastInputInfo` to derive “how long since the last user input”.
+
+Sketch:
 
 ```rust
 pub struct IdleTracker {
@@ -1033,108 +1284,76 @@ impl IdleTracker {
 }
 ```
 
-**State Machine**:
+Default thresholds:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ Idle State Classification                               │
-├─────────────────────────────────────────────────────────┤
-│ Active:    idle < 15 seconds                            │
-│ WarmIdle:  15-60 seconds                                │
-│ DeepIdle:  > 60 seconds                                 │
-└─────────────────────────────────────────────────────────┘
-```
+* `Active`: `< 15s`.
+* `WarmIdle`: 15–60s.
+* `DeepIdle`: `> 60s`.
 
-**Why These Thresholds?**
+These are **configurable**.
 
-* **15 seconds**: User may be reading or thinking, but likely to interact soon
-* **60 seconds**: User is likely away or deeply focused on another task
-* **Configurable**: Per-user preferences can adjust thresholds
+Alternative heuristics considered:
 
-**Alternative Approaches Considered**:
+* Windows background mode (`PROCESS_MODE_BACKGROUND_BEGIN`): rejected due to aggressive working‑set trimming causing paging.
+* CPU‑only heuristics: insufficient; user can be idle while other workloads are active.
+* Screen savers: too coarse and not reliable in modern Windows.
 
-* **PROCESS_MODE_BACKGROUND_BEGIN**: Rejected due to working-set clamp causing severe paging
-* **CPU-only detection**: Insufficient; user may be idle but system busy with other tasks
-* **Screen saver detection**: Too coarse-grained, doesn't account for video playback
+### 7.2 System load sampling
 
-### System Load Sampling
+The scheduler also samples system load (via `sysinfo` and Windows performance counters).
 
-UltraSearch monitors system resources using `sysinfo` crate:
-
-**Metrics Collected**:
+Example metrics:
 
 ```rust
 pub struct SystemLoad {
-    pub cpu_percent: f32,           // CPU usage percentage
-    pub mem_used_percent: f32,      // Memory usage percentage
-    pub disk_busy: bool,            // Disk I/O threshold exceeded
-    pub disk_bytes_per_sec: u64,    // Disk I/O rate
-    pub sample_duration: Duration,  // Sampling window
+    pub cpu_percent: f32,
+    pub mem_used_percent: f32,
+    pub disk_busy: bool,
+    pub disk_bytes_per_sec: u64,
+    pub sample_duration: Duration,
 }
 ```
 
-**Thresholds**:
+Typical thresholds:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ System Load Thresholds                                  │
-├─────────────────────────────────────────────────────────┤
-│ CPU < 20%:   Content indexing allowed in DeepIdle      │
-│ CPU 20-50%:  Metadata updates only                     │
-│ CPU > 50%:   Pause all indexing                        │
-│ Disk Busy:   Flagged when I/O exceeds baseline        │
-└─────────────────────────────────────────────────────────┘
-```
+* CPU < 20% → content indexing OK (in DeepIdle).
+* CPU 20–50% → metadata‑only work.
+* CPU > 50% → pause all heavy indexing.
+* Disk busy flag based on measured `Disk Bytes/sec`.
 
-**Why These Thresholds?**
+Disk I/O sampling often uses PDH counters like `\\PhysicalDisk(_Total)\\Disk Bytes/sec`.
 
-* **20% CPU**: Leaves headroom for user applications and system processes
-* **50% CPU**: System is clearly busy; indexing would cause noticeable slowdown
-* **Disk I/O Monitoring**: Prevents indexing from interfering with user file operations
+### 7.3 Job categories and priorities
 
-**Windows-Specific Implementation**:
+Jobs are split into distinct queues with different policies.
 
-```rust
-#[cfg(windows)]
-fn sample_disk_io() -> Result<u64> {
-    use windows::Win32::System::Performance::*;
-    // Use PDH API: \\PhysicalDisk(_Total)\\Disk Bytes/sec
-    // ...
-}
-```
+**1. Critical updates (cheap)**
 
-### Job Categories and Priorities
+* Delete events, basic renames, attribute changes.
+* Always processed, even in **Active** state.
+* Sub‑millisecond per job.
 
-Jobs are categorized by resource requirements:
+**2. Metadata rebuilds (moderate)**
 
-**Critical Updates** (cheap):
-* Deletion events, simple renames, attribute changes
-* Processed quickly even in Active state
-* Minimal resource usage (< 1ms per event)
+* Volume rescan after USN gap or journal reset.
+* Directory subtree reindex after config change.
+* Allowed in **WarmIdle+**.
 
-**Metadata Rebuilds** (moderate):
-* Volume rescan after USN gap
-* Directory tree reindex after config change
-* Only in WarmIdle or better
-* Typical duration: seconds to minutes
+**3. Content indexing (expensive)**
 
-**Content Indexing** (heavy):
-* New or changed files requiring full extraction
-* Only in DeepIdle with low CPU/disk thresholds
-* Batched into worker processes
-* Typical duration: minutes to hours
+* New/changed files needing extraction.
+* Allowed only in **DeepIdle** and low CPU/disk load.
+* Per‑batch worker processes.
 
-**Scheduler Algorithm**:
+Scheduler tick:
 
 ```rust
 pub async fn tick(&mut self) {
     let idle_sample = self.idle.sample();
     let load = self.load.sample();
     
-    // Update status
     self.update_status(idle_sample, load);
     
-    // Gate jobs on policies
     let allow_content = self.allow_content_jobs(idle_sample, load);
     
     if allow_content && !self.content_jobs.is_empty() {
@@ -1144,86 +1363,80 @@ pub async fn tick(&mut self) {
 }
 ```
 
-**Why Separate Queues?**
+Why separate queues?
 
-* **Different Policies**: Allows different scheduling policies per job type
-* **Priority**: Critical updates can proceed even when system is busy
-* **Deferral**: Content indexing can be deferred without blocking metadata updates
+* Different **SLAs** per job type.
+* Critical updates must not be starved by heavy jobs.
+* Content jobs can be deferred without user‑visible regressions in filename search.
 
-### Process and Thread Priorities
+### 7.4 Process and thread priorities
 
-**Service Process**:
-* Normal process priority (`NORMAL_PRIORITY_CLASS`)
-* Worker threads for USN reading/scheduler at `THREAD_PRIORITY_BELOW_NORMAL`
-* Avoids `PROCESS_MODE_BACKGROUND_BEGIN` due to working-set clamp issues
+**Service process**
 
-**Worker Process**:
-* `IDLE_PRIORITY_CLASS` or `BELOW_NORMAL_PRIORITY_CLASS`
-* Optionally reduced I/O priority at file handle level
-* Can use Windows job objects for memory/CPU caps
+* Runs at normal process priority.
+* USN watcher and scheduler threads typically at `BELOW_NORMAL` thread priority.
+* Avoids Windows background process mode due to aggressive working‑set clamping.
 
-**Why These Priorities?**
+**Worker processes**
 
-* **Service**: Needs to be responsive to user queries, so normal priority
-* **Workers**: Can use idle priority since they're background tasks
-* **Thread-Level**: Allows fine-grained control without affecting entire process
+* Run at `IDLE` or `BELOW_NORMAL` priority.
+* May adjust I/O priority per file handle.
+* Can be placed in a job object to enforce limits.
 
-## IPC Protocol
+Rationale: the service must stay responsive; workers are pure background.
 
-UltraSearch uses Windows named pipes with binary serialization for inter-process communication. This design provides low latency and efficient data transfer.
+---
 
-### Transport Layer
+## 8. IPC Protocol (Named Pipes)
 
-**Named Pipes**:
-* `tokio::net::windows::named_pipe` on service side
-* Synchronous client wrapper for UI/CLI
-* Length-prefixed framing: `[u32 length][payload bytes]`
-* Supports multiple concurrent connections
+UltraSearch uses **Windows named pipes** for IPC between the service, UI, and CLI.
 
-**Why Named Pipes Over Alternatives?**
+### 8.1 Transport
 
-| Transport | Latency | Overhead | Complexity | Windows Support |
-|-----------|---------|----------|------------|-----------------|
-| **Named Pipes** | Low | Minimal | Simple | Excellent |
-| TCP Sockets | Higher | TCP/IP stack | Moderate | Good |
-| Shared Memory | Lowest | Minimal | Complex | Good |
-| Files | High | Polling overhead | Simple | Good |
+* Named pipes via `tokio::net::windows::named_pipe` on the server side.
+* Length‑prefixed messages: `[u32 length][payload bytes]`.
+* Multiple concurrent client connections.
 
-**Decision Factors**:
-* **Low Latency**: Named pipes provide minimal latency for local IPC
-* **Built-in Windows IPC**: No firewall considerations, simple setup
-* **Simple Framing**: Length-prefixed framing is straightforward
-* **Concurrent Connections**: Supports multiple clients efficiently
+Why named pipes?
 
-### Message Types
+| Transport     | Latency | Overhead | Complexity | Local Windows support |
+| ------------- | ------- | -------- | ---------- | --------------------- |
+| Named pipes   | Low     | Low      | Simple     | First‑class           |
+| TCP sockets   | Higher  | Higher   | Medium     | Good, but needs ports |
+| Shared memory | Lowest  | Very low | Complex    | Manual protocols      |
+| Temp files    | High    | High     | Simple     | Awkward for IPC       |
 
-**SearchRequest**:
+Named pipes are the **natural fit** for local Windows IPC: fast, well‑integrated, and firewall‑agnostic.
+
+### 8.2 Message types
+
+**SearchRequest**
 
 ```rust
 pub struct SearchRequest {
-    pub id: Uuid,                    // Request identifier for correlation
-    pub query: QueryExpr,            // Parsed query AST
-    pub limit: u32,                  // Maximum results to return
-    pub mode: SearchMode,            // NameOnly, Content, Hybrid, Auto
-    pub timeout: Option<Duration>,   // Request timeout
-    pub offset: u32,                 // Pagination offset
+    pub id: Uuid,
+    pub query: QueryExpr,          // parsed AST
+    pub limit: u32,
+    pub mode: SearchMode,          // NameOnly, Content, Hybrid, Auto
+    pub timeout: Option<Duration>,
+    pub offset: u32,               // pagination offset
 }
 ```
 
-**SearchResponse**:
+**SearchResponse**
 
 ```rust
 pub struct SearchResponse {
-    pub id: Uuid,                    // Matches request ID
-    pub hits: Vec<SearchHit>,        // Search results
-    pub total: u64,                  // Total matching documents
-    pub truncated: bool,             // Results truncated due to limit
-    pub took_ms: u32,                // Query execution time
-    pub served_by: Option<String>,   // Host identifier for debugging
+    pub id: Uuid,                  // matches request
+    pub hits: Vec<SearchHit>,
+    pub total: u64,
+    pub truncated: bool,
+    pub took_ms: u32,
+    pub served_by: Option<String>, // host identity for debugging
 }
 ```
 
-**Query AST**:
+**Query AST**
 
 ```rust
 pub enum QueryExpr {
@@ -1235,133 +1448,131 @@ pub enum QueryExpr {
 }
 
 pub struct TermExpr {
-    pub field: Option<FieldKind>,     // name, path, ext, content, etc.
+    pub field: Option<FieldKind>,  // name, path, ext, content, etc.
     pub value: String,
-    pub modifier: TermModifier,      // prefix, fuzzy, etc.
+    pub modifier: TermModifier,    // prefix, fuzzy, etc.
 }
 ```
 
-**Serialization**:
-* Uses `bincode` for compact binary format
-* Typical message size: 100-500 bytes for requests, 1-10 KB for responses
-* Much smaller than JSON while maintaining type safety
+Serialization:
 
-### Concurrency Model
+* Uses `bincode` for a compact binary representation.
+* Typical payload sizes:
 
-**Service Side**:
-* Accepts multiple pipe connections concurrently
-* Each connection handled by dedicated task
-* Tasks read requests, execute queries, send responses
-* No shared mutable state; each request is independent
+  * Requests: ~100–500 bytes.
+  * Responses: ~1–10 KB (depends on `limit` and snippet sizes).
 
-**UI Side**:
-* Hidden IPC thread with blocking I/O
-* Results posted to GPUI AppContext for thread-safe updates
-* Avoids async complexity in UI layer
+### 8.3 Concurrency model
 
-**Why This Design?**
+**Service side**
 
-* **Concurrent Queries**: Multiple queries don't block each other
-* **UI Responsiveness**: UI remains responsive even during long-running queries
-* **Simple Error Handling**: Per-connection error handling is straightforward
+* Accepts multiple named pipe connections.
+* One async task per client.
+* Each task:
 
-## Query Execution
+  * Reads length‑prefixed messages.
+  * Executes queries against Tantivy readers.
+  * Writes responses back.
 
-UltraSearch supports three search modes, each optimized for different use cases. The query execution engine builds on Tantivy's query capabilities while adding result merging and ranking logic.
+**UI side**
 
-### NameOnly Mode
+* Hidden IPC thread with blocking I/O.
+* Posts results into the GPUI application context.
+* Keeps UI code free from heavy async concerns.
 
-Queries only the metadata index, providing Everything-style instant filename search.
+---
 
-**Query Building**:
+## 9. Query Execution Modes
+
+UltraSearch exposes three main modes:
+
+### 9.1 NameOnly – filename‑centric search
+
+The default “Everything‑style” mode.
+
+Query building:
 
 ```rust
 fn build_meta_query(&self, expr: &QueryExpr) -> Result<Box<dyn Query>> {
     match expr {
         QueryExpr::Term(t) => {
-            // Default fields: name, path
             let name_query = QueryParser::for_index(index, vec![fields.name])
                 .parse_query(&t.value)?;
             let path_query = QueryParser::for_index(index, vec![fields.path])
                 .parse_query(&t.value)?;
-            BooleanQuery::new(vec![
+            Ok(Box::new(BooleanQuery::new(vec![
                 (Occur::Should, name_query),
                 (Occur::Should, path_query),
-            ])
+            ])))
         }
-        // ... range queries, boolean logic
+        // other cases...
     }
 }
 ```
 
-**Execution**:
-* Single index query against metadata index
-* Results sorted by relevance score (BM25)
-* Typical latency: < 10ms for common queries
+Execution:
 
-**Use Cases**:
-* Finding files by name
-* Filtering by extension or date
-* Quick file location
+* Single Tantivy query against the metadata index.
+* Sorted by relevance (BM25).
+* Typical latency: **< 10ms** for common queries.
 
-### Content Mode
+Use cases:
 
-Queries only the content index, providing full-text search.
+* “Locate file X by name.”
+* Filters by extension, size, or date.
+* Path‑scoped queries for specific trees.
 
-**Query Building**:
+### 9.2 Content – full‑text search
+
+Pure content search when you care only about the contents.
 
 ```rust
 fn build_content_query(&self, expr: &QueryExpr) -> Result<Box<dyn Query>> {
     match expr {
         QueryExpr::Term(t) => {
-            // Default fields: name, content
             let name_query = QueryParser::for_index(index, vec![fields.name])
                 .parse_query(&t.value)?;
             let content_query = QueryParser::for_index(index, vec![fields.content])
                 .parse_query(&t.value)?;
-            BooleanQuery::new(vec![
+            Ok(Box::new(BooleanQuery::new(vec![
                 (Occur::Should, name_query),
                 (Occur::Should, content_query),
-            ])
+            ])))
         }
         // ...
     }
 }
 ```
 
-**Execution**:
-* Single index query against content index
-* Results sorted by relevance score (BM25)
-* Typical latency: 50-200ms depending on index size
+* Single Tantivy query against the content index.
+* Latency: typically **50–200ms**, depending on index size and filters.
 
-**Use Cases**:
-* Finding files containing specific text
-* Searching document contents
-* Code search
+Use cases:
 
-### Hybrid Mode
+* “Find the document that mentions `FooBarBaz`.”
+* Source code search.
+* Document content exploration.
 
-Queries both indices and merges results, providing comprehensive search.
+### 9.3 Hybrid – metadata + content merged
 
-**Execution Flow**:
+Hybrid runs both queries and merges results by `DocKey`.
 
 ```rust
 fn search_hybrid(&self, req: &SearchRequest) -> SearchResponse {
-    let fetch_limit = req.limit * 2;  // Fetch more to allow merging
-    
-    // Parallel execution (currently sequential; parallel planned)
+    let fetch_limit = req.limit * 2;
+
     let meta_resp = self.search_meta(&meta_req);
     let content_resp = self.search_content(&content_req);
     
-    // Merge by DocKey
     let mut hits_map: HashMap<DocKey, SearchHit> = HashMap::new();
+    
     for hit in meta_resp.hits {
         hits_map.insert(hit.key, hit);
     }
     for hit in content_resp.hits {
         hits_map.entry(hit.key)
             .and_modify(|e| {
-                e.score = e.score.max(hit.score);  // Max score strategy
+                e.score = e.score.max(hit.score); // max strategy
                 if e.snippet.is_none() {
                     e.snippet = hit.snippet.clone();
                 }
@@ -1369,36 +1580,34 @@ fn search_hybrid(&self, req: &SearchRequest) -> SearchResponse {
             .or_insert(hit);
     }
     
-    // Sort by score, apply limit
     let mut merged: Vec<SearchHit> = hits_map.into_values().collect();
     merged.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    merged.into_iter().skip(req.offset).take(req.limit).collect()
+    
+    // apply offset and limit
+    // ...
 }
 ```
 
-**Score Merging Strategy**:
+Score strategy:
 
-* **Max Score**: Takes maximum of metadata and content scores
-* **Rationale**: Safer for boolean queries, avoids double-counting
-* **Alternative (Sum)**: Considered but can over-weight documents matching both
+* Take **max(score_meta, score_content)** to avoid double‑counting.
+* Alternative (sum) can overweight documents that match both, but is more complex for some query types.
 
-**Use Cases**:
-* General search (user doesn't specify name vs content)
-* Finding files where name or content matches
-* Comprehensive search across all indexed data
+Planned improvements:
 
-**Future Improvements**:
-* Parallel execution of metadata and content queries
-* Weighted score combination (configurable)
-* Result deduplication with smarter scoring
+* Parallel execution of meta+content queries.
+* Configurable score fusion strategies.
+* Better snippet selection.
 
-## Configuration
+---
 
-UltraSearch uses TOML configuration files with environment variable overrides. Configuration is validated on load with clear error messages.
+## 10. Configuration
 
-### Configuration Structure
+UltraSearch uses **TOML** configuration with environment variable overrides.
 
-**Paths**:
+### 10.1 Example config layout
+
+**Paths**
 
 ```toml
 [paths]
@@ -1409,433 +1618,432 @@ state_dir = "%PROGRAMDATA%\\UltraSearch\\state"
 jobs_dir = "%PROGRAMDATA%\\UltraSearch\\jobs"
 ```
 
-**Logging**:
+**Logging**
 
 ```toml
 [logging]
-level = "info"              # trace, debug, info, warn, error
-format = "json"             # json or text
+level = "info"           # trace, debug, info, warn, error
+format = "json"          # json or text
 file_enabled = true
-file_rotation = "daily"      # daily, size, never
+file_rotation = "daily"  # daily, size, never
 max_size_mb = 100
-retain = 7                   # days
+retain = 7               # days
 ```
 
-**Scheduler**:
+**Scheduler**
 
 ```toml
 [scheduler]
-idle_warm_seconds = 15
-idle_deep_seconds = 60
-cpu_soft_limit_pct = 20
-cpu_hard_limit_pct = 50
-disk_busy_bytes_per_s = 50_000_000
-content_batch_size = 1000
-max_records_per_tick = 10_000
-usn_chunk_bytes = 1_048_576
+idle_warm_seconds       = 15
+idle_deep_seconds       = 60
+cpu_soft_limit_pct      = 20
+cpu_hard_limit_pct      = 50
+disk_busy_bytes_per_s   = 50_000_000
+content_batch_size      = 1000
+max_records_per_tick    = 10_000
+usn_chunk_bytes         = 1_048_576
 ```
 
-**Indexing**:
+**Indexing**
 
 ```toml
 [indexing]
-max_bytes_per_file = 16_777_216    # 16 MiB
-max_chars_per_file = 100_000
-extractous_enabled = true
-ocr_enabled = false
-ocr_max_pages = 10
+max_bytes_per_file   = 16_777_216   # 16 MiB
+max_chars_per_file   = 100_000
+extractous_enabled   = true
+ocr_enabled          = false
+ocr_max_pages        = 10
 ```
 
-**Volumes**:
+**Volumes**
 
 ```toml
 [volumes.1]  # VolumeId 1
-include_paths = ["C:\\Users", "C:\\Projects"]
-exclude_paths = ["C:\\Users\\AppData"]
-content_indexing = true
+include_paths     = ["C:\\Users", "C:\\Projects"]
+exclude_paths     = ["C:\\Users\\AppData"]
+content_indexing  = true
 ```
 
-**Feature Flags**:
+**Feature flags**
 
 ```toml
 [features]
-multi_tier_index = false
-delta_index = false
-adaptive_scheduler = false
-doc_type_analyzers = false
-semantic_search = false
-plugin_system = false
-log_dataset_mode = false
-mem_opt_tuning = false
-auto_tuning = false
+multi_tier_index      = false
+delta_index           = false
+adaptive_scheduler    = false
+doc_type_analyzers    = false
+semantic_search       = false
+plugin_system         = false
+log_dataset_mode      = false
+mem_opt_tuning        = false
+auto_tuning           = false
 ```
 
-### Configuration Reload
+### 10.2 Config reload
 
-* Service supports config reload via control channel
-* UI provides manual "Reload config" option
-* Validation on load with clear error messages
-* Invalid configs are rejected; service continues with previous config
+* Service exposes a control path to reload config.
+* UI offers a “Reload config” action.
+* Configs are **validated** on load.
 
-**Why TOML?**
+  * Invalid configs are rejected.
+  * Service continues running with the previous valid config.
 
-* **Human-Readable**: Easy to edit and understand
-* **Supports Comments**: Important for configuration documentation
-* **Nested Structures**: Natural fit for hierarchical configuration
-* **Good Tooling**: Widely supported with good Rust crates
+Why TOML?
 
-## Logging and Observability
+* Human‑friendly and supports comments.
+* Hierarchical structures map well to UltraSearch’s config needs.
+* Strong library support in Rust.
 
-### Structured Logging
+---
 
-UltraSearch uses `tracing` for structured logging:
+## 11. Logging and Observability
 
-**Log Levels**:
-* `trace`: Very detailed debugging information
-* `debug`: Debugging information
-* `info`: General informational messages
-* `warn`: Warning messages (non-fatal issues)
-* `error`: Error messages (failures)
+### 11.1 Structured logging
 
-**Log Formats**:
-* **JSON**: For file logs (easy parsing, structured data)
-* **Text**: For console (human-readable, colored output)
+UltraSearch uses `tracing` for structured logs.
 
-**Log Rotation**:
-* Daily rotation by default
-* Size-based rotation available
-* Old logs compressed and archived
+* Levels: `trace`, `debug`, `info`, `warn`, `error`.
+* Formats:
 
-**What Gets Logged**:
-* Volume discovery and enumeration
-* USN journal state changes
-* Index commits and merges
-* Worker spawn/exit events
-* Extraction errors per file
-* Query latencies (optional)
-* IPC connection events
+  * JSON (file logs, machine‑readable).
+  * Text (console, human‑readable).
 
-### Metrics Endpoint
+Rotations:
 
-Optional HTTP endpoint at `/metrics` (Prometheus text format):
+* Daily by default.
+* Optional size‑based rotation.
+* Archives compressed and retained according to `retain` policy.
 
-**Exposed Metrics**:
+What gets logged:
 
-```
-# Search performance
+* Volume discovery and mapping.
+* USN journal state and gap handling.
+* Index commits and merges.
+* Worker spawn/exit/failure events.
+* Per‑file extraction errors (with context).
+* Query latencies (optionally).
+* IPC connection lifecycle events.
+
+### 11.2 Metrics endpoint (optional)
+
+Optional HTTP `/metrics` endpoint exposes Prometheus‑style metrics, e.g.:
+
+```text
+# Search latency
 ultrasearch_search_latency_ms_bucket{le="0.005"} 1234
-ultrasearch_search_latency_ms_bucket{le="0.01"} 5678
+ultrasearch_search_latency_ms_bucket{le="0.010"} 5678
 ultrasearch_search_latency_ms_sum 123.45
 ultrasearch_search_latency_ms_count 10000
 
-# Worker metrics
+# Workers
 ultrasearch_worker_cpu_percent 15.5
 ultrasearch_worker_mem_bytes 67108864
 
-# Queue metrics
+# Queues
 ultrasearch_queue_depth 42
 ultrasearch_active_workers 2
 
-# Index metrics
+# Index sizes
 ultrasearch_indexed_files_total{type="meta"} 1000000
 ultrasearch_indexed_files_total{type="content"} 500000
 ultrasearch_index_size_bytes{type="meta"} 1073741824
 ```
 
-**Why Prometheus Format?**
+Reliable out‑of‑the‑box integration with Prometheus, Grafana, etc.
 
-* **Standard Format**: Widely supported, easy integration
-* **Monitoring Systems**: Easy integration with Prometheus, Grafana, etc.
-* **Low Overhead**: Text format, simple parsing
+### 11.3 Status API over IPC
 
-### Status API
+The IPC protocol also exposes a **status** call that returns:
 
-IPC endpoint for real-time status queries:
+* Volume indexing status (indexed count, pending count, last USN).
+* Index statistics (size, docs, recent commit times).
+* Scheduler state (idle classification, CPU load, queue depths).
+* Worker stats (active workers, last exit codes).
 
-**Status Information**:
-* Volume status (indexed files, pending files, last USN)
-* Index statistics (size, document count, last commit time)
-* Scheduler state (idle state, CPU usage, queue depths)
-* Metrics snapshot (latency percentiles, worker stats)
+Used by:
 
-**Use Cases**:
-* UI progress indicators
-* Diagnostics and troubleshooting
-* Health checks
+* The UI for progress bars / status banners.
+* External diagnostics and health checks.
 
-## Security and Reliability
+---
 
-### Privilege Model
+## 12. Security and Reliability
 
-**Service Account**:
-* Runs as Windows service under `LocalSystem` or dedicated service account
-* Requires `SE_BACKUP_NAME` and `SE_RESTORE_NAME` privileges for MFT/USN access
-* UI runs as normal user, communicates via IPC (no elevation needed)
+### 12.1 Privilege model
 
-**Hardening**:
-* Strong ACLs on program files and data directories
-* Prevents DLL hijacking vulnerabilities
-* Worker processes run with restricted tokens
-* No network services exposed
+**Service**
 
-**Why These Privileges?**
+* Runs as `LocalSystem` or a dedicated service account.
+* Needs backup/restore privileges for raw NTFS/USN access.
 
-* **MFT/USN Access**: Requires elevated privileges for raw volume access
-* **Service Account**: Provides necessary access without user elevation
-* **UI Separation**: UI doesn't need privileges; all privileged operations in service
+**UI**
 
-### Resilience
+* Runs as the current user.
+* Communicates with the service only via named pipes.
+* Does not require elevation.
 
-**Index Corruption**:
-* Tantivy commits are atomic; index is either in previous or new state
-* On startup corruption detection, renames index to `*.broken`
-* Triggers rebuild from MFT/USN
-* No data loss; worst case is re-indexing
+Hardening:
 
-**Journal Wrap**:
-* Detected via `journal_id` comparison and `FirstUsn`/`NextUsn` range checks
-* Automatically schedules volume rescan
-* No manual intervention required
+* Tight ACLs on program and data directories to avoid DLL hijacking.
+* Workers can be launched with restricted tokens.
+* Service exposes no network listener; it is entirely local.
 
-**Power Loss**:
-* Safe due to append + commit design
-* Worst case: redo last batch
-* No corruption risk; Tantivy ensures consistency
+### 12.2 Resilience strategies
 
-**Worker Crashes**:
-* Service monitors worker processes
-* Logs errors and backs off offending files
-* Retries with exponential backoff
-* Failed files can be manually retried
+**Index corruption**
 
-**Why These Strategies?**
+* Tantivy commits are atomic; on crash, you get either old or new state.
+* On startup, corruption results in renaming to `*.broken` and a rebuild.
+* Worst case: time spent re‑indexing; no silent data corruption.
 
-* **Atomic Commits**: Ensure consistency even on power loss
-* **Automatic Recovery**: Reduces manual intervention
-* **Backoff**: Prevents retry storms
-* **Logging**: Provides audit trail for debugging
+**USN journal wrap/recreation**
 
-## Performance Characteristics
+* Detected using `journal_id` and USN range checks.
+* Automatically schedules a volume rescan.
+* No manual intervention needed.
 
-### Indexing Performance
+**Power loss**
 
-**Initial Metadata Build**:
-* **Rate**: 100k-1M files/second (depends on disk speed and MFT fragmentation)
-* **Memory**: < 100 MB during build
-* **Example**: 1M files indexed in ~1-10 seconds on modern SSD
+* Writes are append‑then‑commit; partial batches are simply retried.
+* No risk of partial commit corruption.
 
-**Incremental Updates**:
-* **Latency**: < 1ms per file change event
-* **Throughput**: 10k-100k events/second
-* **Memory**: Minimal; streaming processing
+**Worker crashes**
 
-**Content Extraction**:
-* **Rate**: Varies by format:
-  * Plain text: 100-1000 files/second
-  * PDF: 10-100 files/second
-  * Office documents: 5-50 files/second
-* **Memory**: Bounded by worker heap size (64-256 MB)
+* Service monitors worker exit status.
+* Files that repeatedly cause crashes can be backoff‑blacklisted.
+* Crash info is logged with context for debugging.
 
-**Index Commit**:
-* **Latency**: 100-500ms for typical batch sizes
-* **Frequency**: Every 100k docs or 30s (metadata), per-batch (content)
+---
 
-### Query Performance
+## 13. Performance Characteristics
 
-**Filename Search**:
-* **Latency**: < 10ms for common queries (p95: < 20ms)
-* **Throughput**: 1000+ queries/second
-* **Scaling**: Linear with CPU cores
+### 13.1 Indexing
 
-**Content Search**:
-* **Latency**: 50-200ms depending on index size (p95: < 500ms)
-* **Throughput**: 100+ queries/second
-* **Scaling**: Linear with CPU cores
+**Initial metadata build**
 
-**Hybrid Search**:
-* **Latency**: 100-300ms (sum of metadata + content query times)
-* **Throughput**: 50+ queries/second
-* **Future**: Parallel execution will reduce latency
+* Rate: **100k–1M files/sec**, depending on disk.
+* Memory: < 100MB during build.
+* Example: 1M files → on the order of seconds on a modern SSD.
 
-**Concurrent Queries**:
-* **Scaling**: Linear up to CPU/core count
-* **Isolation**: Each query is independent; no blocking
+**Incremental updates**
 
-### Memory Usage
+* Per event: < 1ms typical.
+* Throughput: 10k–100k events/sec possible.
 
-**Service Process**:
-* **Idle**: 20-50 MB RSS typical
-* **Active**: 30-80 MB RSS (depends on query load)
-* **Components**:
-  * Index readers: 10-50 MB per index
-  * USN watchers: < 5 MB
-  * Scheduler: < 1 MB
-  * IPC server: < 5 MB
+**Content extraction**
 
-**Worker Process**:
-* **Heap**: 64-256 MB RSS (configurable)
-* **Components**:
-  * Tantivy writer: 64-256 MB (heap size)
-  * Extractous: 10-50 MB
-  * File buffers: < 10 MB
+* Plain text: ~100–1000 files/sec.
+* PDF: ~10–100 files/sec.
+* Office docs: ~5–50 files/sec.
+* Bounded by worker heap and `max_bytes_per_file`.
 
-**Total System Impact**:
-* **Idle**: < 100 MB (service only)
-* **Active Indexing**: < 500 MB (service + workers)
-* **Peak**: < 1 GB (multiple concurrent workers)
+**Index commits**
 
-## Design Philosophy
+* Latency: 100–500ms per commit (batch‑dependent).
+* Frequency: every N docs or fixed time windows for metadata; per‑batch for content.
 
-UltraSearch follows several core principles that guide architectural decisions:
+### 13.2 Querying
 
-### Always-On But Tiny
+**Filename / NameOnly**
 
-* Long-lived Windows service stays in tens of MB RSS
-* Heavy code (Tantivy writer, Extractous, OCR) lives in separate worker process
-* Worker only runs when needed, exits immediately after completion
+* Latency: p50 < 10ms; p95 < 20ms.
+* Throughput: 1000+ QPS on modest hardware.
 
-**Rationale**: Users expect background services to be lightweight. Separating heavy operations ensures the service remains responsive and doesn't consume excessive resources.
+**Content**
 
-### Maximal OS/FS Leverage
+* Latency: 50–200ms typical; p95 < 500ms (index‑size dependent).
+* Throughput: 100+ QPS on multi‑core.
 
-* NTFS MFT enumeration + USN journal for changes
-* No recursive `FindFirstFile` crawlers
-* Direct use of Windows volume APIs
+**Hybrid**
 
-**Rationale**: Operating systems provide efficient primitives for file system operations. Using these primitives directly avoids unnecessary overhead and provides better performance.
+* Latency roughly meta+content combined (future: parallelized).
+* Throughput depends on fusion strategy and limits.
 
-### Single Source of Truth
+### 13.3 Memory
 
-* Filename, metadata, and content all in Tantivy indices
-* No ad-hoc custom databases
-* Small mapping structures only where necessary
+**Service**
 
-**Rationale**: Maintaining multiple data stores increases complexity and consistency risks. Using a single search engine for all queries simplifies the architecture and ensures consistent behavior.
+* Idle: ~20–50MB RSS.
+* Under load: ~30–80MB (index readers + caches).
 
-### Background Respect
+**Worker**
 
-* Indexing only during user/system idle
-* Low process/thread priorities
-* Avoids problematic Windows background modes
+* Heap: 64–256MB (configurable).
+* Extractors, scratch buffers, etc. within that bound.
 
-**Rationale**: Search indexing is a background task and should not interfere with user activity. Respecting idle state and system load ensures indexing remains invisible to users.
+**System‑wide**
 
-### Predictable Memory
+* Idle (no workers): < 100MB total.
+* With active workers: target < 500MB.
+* Multiple concurrent workers are bounded via writer heap + job object limits.
 
-* Memory-mapped storage for large datasets
-* Zero-copy serialization where possible
-* Bounded allocations with configurable limits
+---
 
-**Rationale**: Unpredictable memory usage leads to poor user experience and system instability. Bounded allocations and memory-mapped storage ensure predictable behavior.
+## 14. Design Philosophy
 
-## Build and Development
+A few guiding principles show up everywhere in UltraSearch:
 
-### Prerequisites
+### 14.1 Always‑on but tiny
 
-* Rust nightly toolchain (see `rust-toolchain.toml`)
-* Windows SDK (for Windows builds)
-* Cargo (comes with Rust)
+* The service is designed to be **permanently running** but **small**.
+* Anything heavy (writers, extractors, OCR, big heaps) lives in workers that exit promptly.
 
-### Building
+### 14.2 Maximal OS/FS leverage
+
+* Use NTFS MFT and USN journal.
+* Avoid naive directory walkers.
+* Use Windows APIs where they provide the right primitive (named pipes, PDH counters, etc.).
+
+### 14.3 Single source of truth
+
+* All search‑relevant data lives in Tantivy indices keyed by `DocKey`.
+* No hidden SQL databases or bespoke stores.
+* Small auxiliary mappings only where necessary (e.g., VolumeId ↔ GUID).
+
+### 14.4 Background respect
+
+* Index only when user and system are idle.
+* Use low process/thread/I/O priorities.
+* Avoid clever but dangerous modes (like background working‑set clamping).
+
+### 14.5 Predictable memory
+
+* Prefer memory‑mapped files over large in‑process heaps.
+* Use zero‑copy serialization.
+* Configure hard caps wherever possible.
+
+---
+
+## 15. Build and Development
+
+This section is for developers building UltraSearch from source or hacking on it.
+
+### 15.1 Prerequisites
+
+* Rust **nightly** toolchain (see `rust-toolchain.toml`).
+* Windows SDK.
+* Cargo (ships with Rust).
+* For content extraction with Extractous: GraalVM CE 23.x (see `docs/GRAALVM_SETUP.md`).
+
+### 15.2 Building the binaries
 
 ```bash
-# Build all binaries
+# Build everything
 cargo build --release
 
-# Build specific binary
+# Build specific binaries
 cargo build --release -p service
 cargo build --release -p index-worker
 cargo build --release -p ui
 cargo build --release -p cli
 
-# Run tests
+# Tests
 cargo test --all-targets
 
-# Run lints
+# Lints
 cargo clippy --all-targets -- -D warnings
 
-# Check formatting
+# Formatting
 cargo fmt --check
 ```
 
-### Development Workflow
+### 15.3 Development workflow with `just`
 
-The project uses `just` (a command runner) for common tasks:
+A `Justfile` contains common tasks:
 
 ```bash
 # Run all quality gates
 just
 
-# Individual checks
-just fmt      # Check formatting
-just lint     # Run clippy
-just test     # Run tests
-just check    # Compile check
-just build    # Release build
+# Or individually:
+just fmt      # formatting
+just lint     # clippy
+just test     # tests
+just check    # compile check
+just build    # release build
 ```
 
-### Code Quality
+### 15.4 Code quality expectations
 
-* All code must pass `cargo fmt --check`
-* All code must pass `cargo clippy --all-targets -- -D warnings`
-* Run UBS (Ultimate Bug Scanner) on changed files before committing
-* Follow patterns in `RUST_BEST_PRACTICES_GUIDE.md`
-* Use workspace-level dependency management (wildcard versions per policy)
+* All code must pass:
 
-### Project Structure
+  * `cargo fmt --check`
+  * `cargo clippy --all-targets -- -D warnings`
+* Run “UBS” (Ultimate Bug Scanner) on changed files before committing.
+* Follow patterns in `RUST_BEST_PRACTICES_GUIDE.md`.
+* Use workspace‑level dependency management; wildcards only within agreed policy.
 
-```
+### 15.5 Project structure
+
+```text
 ultrasearch/
-├── Cargo.toml              # Workspace root
-├── rust-toolchain.toml     # Nightly toolchain pin
-├── Justfile                # Development commands
-├── AGENTS.md               # Development guidelines
-├── PLAN_TO_BUILD_*.md      # Architecture plan
+├── Cargo.toml                    # Workspace root
+├── rust-toolchain.toml           # Nightly pin
+├── Justfile                      # Development commands
+├── AGENTS.md                     # Development guidance / meta
+├── PROGRESS_REPORT.md
+├── IMPLEMENTATION_STATUS.md
+├── MODERN_UX_PLAN.md
+├── PLAN_TO_BUILD_RUST_WINDOWS_FILE_EXPLORER_TOOL.md
+├── UI_FIXES_NEEDED.md
+├── UI_IMPLEMENTATION_FINAL_STATUS.md
+├── COMPLETE_FIX_PLAN.md
+├── COMPREHENSIVE_PLAN_TO_FIX_ALL_REMAINING_UI_UX_ISSUES_AND_FULLY_LEVERAGE_GPUI.md
 ├── RUST_BEST_PRACTICES_GUIDE.md
+├── build_installer.ps1           # Script for building the Windows installer
+├── docs/
+│   ├── FEATURES.md
+│   ├── GRAALVM_SETUP.md
+│   └── ADVANCED_FEATURES.md
 └── ultrasearch/
-    ├── Cargo.toml          # Nested workspace (if needed)
+    ├── Cargo.toml                # Nested workspace (if used)
     └── crates/
-        ├── core-types/          # Shared types, IDs, config
-        ├── core-serialization/  # rkyv/bincode wrappers
-        ├── ntfs-watcher/        # MFT + USN access
-        ├── meta-index/          # Metadata Tantivy index
-        ├── content-index/       # Content Tantivy index
-        ├── content-extractor/   # Extractous/IFilter/OCR
-        ├── scheduler/           # Idle + system load heuristics
-        ├── service/             # Windows service host
-        ├── index-worker/        # Batch worker binary
-        ├── ipc/                # Named pipe client/server
-        ├── ui/                 # GPUI application
-        ├── cli/                # Command-line tool
-        └── semantic-index/     # Vector search (advanced)
+        ├── core-types/           # Shared types, IDs, config
+        ├── core-serialization/   # rkyv/bincode wrappers
+        ├── ntfs-watcher/         # MFT + USN integration
+        ├── meta-index/           # Metadata Tantivy index
+        ├── content-index/        # Content Tantivy index
+        ├── content-extractor/    # Extractous/IFilter/OCR stack
+        ├── scheduler/            # Idle + load heuristics
+        ├── service/              # Windows service host
+        ├── index-worker/         # Batch worker binary
+        ├── ipc/                  # Named pipe client/server
+        ├── ui/                   # GPUI application
+        ├── cli/                  # CLI interface
+        └── semantic-index/       # Vector/semantic index (advanced)
 ```
 
-## Future Enhancements
+---
 
-See `docs/ADVANCED_FEATURES.md` for planned enhancements:
+## 16. Future Enhancements
 
-* **Multi-tier index layout**: Hot/warm/cold tiers for both metadata and content
-* **In-memory delta index**: Ultra-hot data in RAM for instant updates
-* **Document-type-aware analyzers**: Specialized indexing for code, logs, documents
-* **Query planner**: AST rewrite and aggressive filter pushdown
-* **Adaptive scheduler**: Feedback-driven scheduling and concurrency control
-* **Hybrid semantic search**: Vector index for semantic similarity
-* **Plugin architecture**: Custom extractors and index-time transforms
-* **Log file specialization**: Optimized handling for large append-only logs
-* **Memory optimization**: Allocator strategy and footprint tuning
-* **Deep observability**: Auto-tuning feedback loops
+Planned and experimental features are tracked in `docs/ADVANCED_FEATURES.md`. Highlights include:
 
-Each enhancement is designed to be additive and independently configurable, allowing gradual adoption without disrupting existing functionality.
+* **Multi‑tier index layout** – hot/warm/cold tiers for both meta and content.
+* **In‑memory delta indices** – ultra‑hot data in RAM layered over on‑disk segments.
+* **Document‑type‑aware analyzers** – specialized analyzers for code, logs, docs.
+* **Query planner** – AST rewrites, filter pushdown, smarter execution plans.
+* **Adaptive scheduler** – feedback‑driven job scheduling and concurrency control.
+* **Hybrid semantic search** – add vector search for semantic similarity over the existing BM25 stack.
+* **Plugin architecture** – custom extractors and transforms at index time.
+* **Log file specialization** – tailored handling for large append‑only logs.
+* **Memory optimization work** – allocator choices, per‑component footprint tuning.
+* **Auto‑tuning** – runtime heuristics that nudge config toward stable optima.
 
-## License
+All of these are intended to be **additive** and **opt‑in**, not regress existing behavior.
 
-Licensed under either of:
+---
 
-* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-* MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+## 17. License
 
-at your option.
+UltraSearch is licensed under:
 
-## Repository
+* MIT License (`LICENSE-MIT`, [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
 
-https://github.com/Dicklesworthstone/ultrasearch
+---
+
+## 18. Repository
+
+Source code, issues, and discussions live here:
+
+* **[https://github.com/Dicklesworthstone/ultrasearch](https://github.com/Dicklesworthstone/ultrasearch)**
